@@ -17,7 +17,7 @@ import {
   saveUsers as saveUsersCloud,
   saveWarehouses as saveWarehousesCloud,
 } from "../lib/repository";
-import { getSupabaseSession, hasSupabaseConfig } from "../lib/supabase";
+import { getSupabaseSession, hasSupabaseConfig, supabase } from "../lib/supabase";
 
 async function runCloudWrite(fn, options = {}) {
   const { requiresAuth = true } = options;
@@ -72,47 +72,53 @@ export function useAppState(defaults) {
 
   useEffect(() => {
     let alive = true;
+    let cloudLoaded = false;
+    let authResolved = false;
+    let latestAuthSession = null;
+
+    const resolveSessionFromAuth = () => {
+      const pool = usersRef.current || [];
+      if (!latestAuthSession?.user) return null;
+      const authId = latestAuthSession.user.id;
+      const authEmail = (latestAuthSession.user.email || "").toLowerCase();
+      const matchedUser = pool.find(
+        (user) =>
+          user.authUserId === authId ||
+          (user.login && user.login.toLowerCase() === authEmail)
+      );
+      return matchedUser ? { user: matchedUser } : null;
+    };
+
+    const maybeFinishLoading = () => {
+      if (!alive || !cloudLoaded || !authResolved) return;
+      setSession(resolveSessionFromAuth());
+      setReady(true);
+    };
+
+    if (!hasSupabaseConfig) {
+      setUsers([]);
+      setWarehouses([]);
+      setAssets([]);
+      setTransfers([]);
+      setCategories(defaults.categories || []);
+      setSession(null);
+      setReady(true);
+      return () => {
+        alive = false;
+      };
+    }
 
     (async () => {
-      if (!hasSupabaseConfig) {
-        if (!alive) return;
-        setUsers([]);
-        setWarehouses([]);
-        setAssets([]);
-        setTransfers([]);
-        setCategories(defaults.categories || []);
-        setSession(null);
-        setReady(true);
-        return;
-      }
-
       try {
-        const [cloud, authSession] = await Promise.all([
-          loadCloudState(),
-          getSupabaseSession().catch(() => null),
-        ]);
+        const cloud = await loadCloudState();
         if (!alive) return;
         const nextUsers = cloud.users || [];
         setUsers(nextUsers);
+        usersRef.current = nextUsers;
         setWarehouses(cloud.warehouses || []);
         setAssets(cloud.assets || []);
         setTransfers(cloud.transfers || []);
         setCategories(cloud.categories?.length ? cloud.categories : defaults.categories || []);
-
-        // Restore session from Supabase Auth BEFORE flipping `ready` so the UI
-        // never briefly renders the Login page for logged-in users.
-        if (authSession?.user) {
-          const authId = authSession.user.id;
-          const authEmail = (authSession.user.email || "").toLowerCase();
-          const matchedUser = nextUsers.find(
-            (user) =>
-              user.authUserId === authId ||
-              (user.login && user.login.toLowerCase() === authEmail)
-          );
-          setSession(matchedUser ? { user: matchedUser } : null);
-        } else {
-          setSession(null);
-        }
       } catch (error) {
         console.warn("Cloud state load failed:", error?.message || error);
         if (!alive) return;
@@ -121,14 +127,62 @@ export function useAppState(defaults) {
         setAssets([]);
         setTransfers([]);
         setCategories(defaults.categories || []);
-        setSession(null);
+      } finally {
+        cloudLoaded = true;
+        maybeFinishLoading();
       }
-
-      if (alive) setReady(true);
     })();
+
+    // Auth resolution: use onAuthStateChange as the single source of truth.
+    // Supabase fires an INITIAL_SESSION event once the client finishes
+    // hydrating from localStorage (including any token refresh), so we rely
+    // on it to know the definitive auth state before rendering.
+    let authSubscription = null;
+    let safetyTimer = null;
+    if (supabase) {
+      const { data } = supabase.auth.onAuthStateChange((event, authSession) => {
+        if (!alive) return;
+        latestAuthSession = authSession;
+
+        if (!authResolved) {
+          authResolved = true;
+          maybeFinishLoading();
+          return;
+        }
+
+        if (event === "SIGNED_OUT") {
+          setSession(null);
+          return;
+        }
+        if ((event === "SIGNED_IN" || event === "USER_UPDATED") && authSession?.user) {
+          const next = resolveSessionFromAuth();
+          if (next) setSession(next);
+        }
+      });
+      authSubscription = data?.subscription;
+
+      // Safety net: if onAuthStateChange does not deliver an initial event
+      // within 3s (unexpected), fall back to getSession() so we never hang.
+      safetyTimer = setTimeout(async () => {
+        if (!alive || authResolved) return;
+        try {
+          latestAuthSession = await getSupabaseSession();
+        } catch {
+          latestAuthSession = null;
+        }
+        if (!alive || authResolved) return;
+        authResolved = true;
+        maybeFinishLoading();
+      }, 1500);
+    } else {
+      authResolved = true;
+      maybeFinishLoading();
+    }
 
     return () => {
       alive = false;
+      if (safetyTimer) clearTimeout(safetyTimer);
+      authSubscription?.unsubscribe?.();
     };
   }, [defaults]);
 

@@ -9,7 +9,7 @@ import {
   rpcRequestTransfer,
   rpcRequestWriteoff,
 } from "./lib/repository";
-import { getSupabaseSession, hasSupabaseConfig, signInWithPassword, signOut as signOutSupabase, supabase } from "./lib/supabase";
+import { getSupabaseSession, hasSupabaseConfig, signInWithPassword, signOut as signOutSupabase } from "./lib/supabase";
 import { subscribeToCloudChanges } from "./lib/realtime";
 import { useAppState } from "./state/useAppState";
 import { Login } from "./features/auth/Login";
@@ -101,11 +101,6 @@ export default function App() {
       []
     )
   );
-
-  const usersRef = useRef(users);
-  useEffect(() => {
-    usersRef.current = users;
-  }, [users]);
 
   const login = async ({ login: loginValue, password }) => {
     if (!hasSupabaseConfig) {
@@ -201,32 +196,8 @@ export default function App() {
     window.scrollTo({ top: 0 });
   };
 
-  // Keep local session state aligned with Supabase Auth state changes
-  // (SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED, USER_UPDATED). We only clear
-  // local session on explicit SIGNED_OUT to avoid flashes during token
-  // refresh or transient null reads from getSession().
-  useEffect(() => {
-    if (!ready || !hasSupabaseConfig || !supabase) return;
-    const { data: subscription } = supabase.auth.onAuthStateChange((event, authSession) => {
-      if (event === "SIGNED_OUT") {
-        void saveSession(null);
-        return;
-      }
-      if (event === "SIGNED_IN" && authSession?.user) {
-        const authId = authSession.user.id;
-        const authEmail = (authSession.user.email || "").toLowerCase();
-        const matchedUser = usersRef.current.find(
-          (user) => user.authUserId === authId || user.login.toLowerCase() === authEmail
-        );
-        if (matchedUser) {
-          void saveSession({ user: matchedUser });
-        }
-      }
-    });
-    return () => {
-      subscription?.subscription?.unsubscribe?.();
-    };
-  }, [ready, saveSession]);
+  // Auth state is fully managed inside useAppState via onAuthStateChange;
+  // no extra auth-syncing effects needed here.
 
   useEffect(() => {
     if (!ready || !hasSupabaseConfig || !session?.user) return;
