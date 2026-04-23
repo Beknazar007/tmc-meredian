@@ -472,7 +472,7 @@ begin
   end if;
 
   perform public.tmc_append_asset_movement(
-    p_asset_id, p_transfer_id, 'transfer_requested',
+    p_asset_id, p_transfer_id, 'transfer_pending',
     p_qty, p_unit, p_to_wh_id, p_to_responsible_id, p_actor, p_notes
   );
 end;
