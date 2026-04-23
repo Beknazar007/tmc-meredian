@@ -490,6 +490,7 @@ declare
   src public.tmc_assets%rowtype;
   existing public.tmc_assets%rowtype;
   new_asset_id text;
+  caller public.tmc_users%rowtype;
 begin
   select * into tr from public.tmc_transfers where id = p_transfer_id for update;
   if tr.id is null then
@@ -497,6 +498,13 @@ begin
   end if;
   if tr.status <> 'pending' then
     raise exception 'Передача % уже обработана (статус: %)', p_transfer_id, tr.status;
+  end if;
+
+  if auth.uid() is not null then
+    select * into caller from public.tmc_users where auth_user_id = auth.uid() limit 1;
+    if caller.id is null or (caller.role <> 'admin' and caller.id <> tr.to_responsible_id) then
+      raise exception 'Подтвердить передачу может только назначенный получатель или администратор.';
+    end if;
   end if;
 
   select * into src from public.tmc_assets where id = tr.asset_id for update;
@@ -606,6 +614,7 @@ declare
   tr public.tmc_transfers%rowtype;
   src public.tmc_assets%rowtype;
   reason_text text;
+  caller public.tmc_users%rowtype;
 begin
   reason_text := nullif(btrim(coalesce(p_reason, '')), '');
   if reason_text is null then
@@ -618,6 +627,13 @@ begin
   end if;
   if tr.status <> 'pending' then
     raise exception 'Передача % уже обработана (статус: %)', p_transfer_id, tr.status;
+  end if;
+
+  if auth.uid() is not null then
+    select * into caller from public.tmc_users where auth_user_id = auth.uid() limit 1;
+    if caller.id is null or (caller.role <> 'admin' and caller.id <> tr.to_responsible_id) then
+      raise exception 'Отклонить передачу может только назначенный получатель или администратор.';
+    end if;
   end if;
 
   select * into src from public.tmc_assets where id = tr.asset_id for update;

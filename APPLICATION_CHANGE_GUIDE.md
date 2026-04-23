@@ -129,6 +129,14 @@ Implemented via Edge Function:
   2. `tmc_users` profile row with linked `auth_user_id`
 - Access control: only callers mapped to `tmc_users.role = 'admin'`.
 
+### User ↔ warehouse assignment (many-to-many)
+A user can be responsible for **multiple warehouses**. The source of truth is `tmc_warehouses.responsible_ids` (jsonb array of `tmc_users.id`). The trigger `trg_sync_warehouse_responsibles` keeps `tmc_warehouse_responsibles(warehouse_id, user_id)` in sync whenever a warehouse row is updated.
+- `tmc_users.warehouse_id` stores the user's **primary** warehouse (first selected in UI) — used as the default `myWHid` filter for "my warehouse" views.
+- UI: `UserAdmin` in `src/App.jsx` renders a checkbox list of warehouses. On save it:
+  1. Updates the user profile (sets `warehouseId` = first checked warehouse or `null`).
+  2. Calls `saveWarehouses()` once with all warehouse rows adjusted — adds/removes the user from each `responsibleIds` array to match the selection.
+- Admin users are not listed on warehouses' `responsibleIds` (checkbox list is hidden when role = admin); they have implicit access to everything.
+
 ---
 
 ## 7) State Layer Contract (`useAppState`)
@@ -179,9 +187,10 @@ The transfer process is the core lifecycle event for an asset. Every transfer ha
 1. **Request** — source warehouse responsible (or admin) initiates transfer from `AssetDetail` via "Передать ТМЦ".
    - RPC: `tmc_request_transfer`.
    - Effect: transfer row created with `status='pending'`; source asset has its `qty` deducted (or, for single-unit assets, status set to `В пути`).
-2. **Confirm / Reject** — destination warehouse responsible (or admin) acts from `IncomingPage` or `AssetDetail` incoming block.
+2. **Confirm / Reject** — **only** the user named in `tmc_transfers.to_responsible_id` (or an admin) can act. The UI hides the Подтвердить/Отклонить buttons for anyone else, and both RPCs enforce the same check server-side via `auth.uid()` → `tmc_users.auth_user_id`.
    - Confirm → RPC `tmc_confirm_transfer`. Asset is actually moved/merged to the destination warehouse.
    - Reject → RPC `tmc_reject_transfer`. UI prompts for a reason via `window.prompt`; the reason is **required** and is stored in `tmc_transfers.reject_reason`. Source asset is restored.
+   - When creating a transfer, the «Ответственный получателя» dropdown lists only users that appear in `tmc_warehouses.responsible_ids` of the destination warehouse — you cannot route a transfer to someone who isn't responsible there.
 3. **Act** — available at all three stages. Button `Акт` navigates to the `waybill` page (`WaybillPage` in `App.jsx`).
 
 **Act (`WaybillPage`) contents:**

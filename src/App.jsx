@@ -301,7 +301,8 @@ export default function App() {
 
   const isAdmin = session.user.role === "admin";
   const myWHid = session.user.warehouseId;
-  const incoming = transfers.filter((t) => t.status === "pending" && (isAdmin || t.toWhId === myWHid));
+  const myUserId = session.user.id;
+  const incoming = transfers.filter((t) => t.status === "pending" && (isAdmin || t.toResponsibleId === myUserId));
   const pendingWO = assets.filter((a) => a.status === "На списание");
   const lowStock = assets.filter((a) => a.qty !== undefined && a.minQty > 0 && a.qty <= a.minQty && a.status !== "Списан");
 
@@ -548,6 +549,7 @@ function AssetDetail(props) {
 
   const createTransfer = async () => {
     if (!transferForm.toWhId) return alert("Выберите склад назначения");
+    if (!transferForm.responsibleId) return alert("Выберите ответственного получателя");
     const toWarehouse = warehouses.find((item) => item.id === transferForm.toWhId);
     const qty = hasQty ? Number(transferForm.qty) : null;
     if (hasQty && (!qty || qty <= 0 || qty > asset.qty)) {
@@ -694,7 +696,7 @@ function AssetDetail(props) {
             </div>
           </Card>
 
-          {pendingTransfer && (isAdmin || myWHid === pendingTransfer.toWhId) && (
+          {pendingTransfer && (isAdmin || pendingTransfer.toResponsibleId === session.user.id) && (
             <Card style={{ borderColor: "#8b5cf6" }}>
               <SectionTitle>Входящая передача</SectionTitle>
               <Muted>
@@ -753,7 +755,11 @@ function AssetDetail(props) {
               {showTransfer && (
                 <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
                   <Field label="Склад назначения">
-                    <select style={inputStyle} value={transferForm.toWhId} onChange={(e) => setTransferForm((p) => ({ ...p, toWhId: e.target.value }))}>
+                    <select
+                      style={inputStyle}
+                      value={transferForm.toWhId}
+                      onChange={(e) => setTransferForm((p) => ({ ...p, toWhId: e.target.value, responsibleId: "" }))}
+                    >
                       <option value="">— выберите —</option>
                       {otherWarehouses.map((item) => (
                         <option key={item.id} value={item.id}>{item.name}</option>
@@ -766,12 +772,38 @@ function AssetDetail(props) {
                     </Field>
                   )}
                   <Field label="Ответственный получателя">
-                    <select style={inputStyle} value={transferForm.responsibleId} onChange={(e) => setTransferForm((p) => ({ ...p, responsibleId: e.target.value }))}>
-                      <option value="">— выберите —</option>
-                      {users.map((item) => (
-                        <option key={item.id} value={item.id}>{item.name}</option>
-                      ))}
-                    </select>
+                    {(() => {
+                      const dest = warehouses.find((w) => w.id === transferForm.toWhId);
+                      const destResponsibleIds = dest?.responsibleIds || [];
+                      const eligible = users.filter((u) => destResponsibleIds.includes(u.id));
+                      const noDest = !transferForm.toWhId;
+                      return (
+                        <>
+                          <select
+                            style={inputStyle}
+                            value={transferForm.responsibleId}
+                            onChange={(e) => setTransferForm((p) => ({ ...p, responsibleId: e.target.value }))}
+                            disabled={noDest || eligible.length === 0}
+                          >
+                            <option value="">
+                              {noDest
+                                ? "— сначала выберите склад —"
+                                : eligible.length === 0
+                                  ? "— на складе нет ответственных —"
+                                  : "— выберите —"}
+                            </option>
+                            {eligible.map((item) => (
+                              <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                          </select>
+                          {!noDest && eligible.length === 0 && (
+                            <Muted style={{ marginTop: 6 }}>
+                              Назначьте ответственных на склад «{dest?.name}» в разделе «Склады».
+                            </Muted>
+                          )}
+                        </>
+                      );
+                    })()}
                   </Field>
                   <Field label="Примечание">
                     <input style={inputStyle} value={transferForm.notes} onChange={(e) => setTransferForm((p) => ({ ...p, notes: e.target.value }))} />
@@ -883,7 +915,7 @@ function AssetDetail(props) {
 }
 
 function IncomingPage({ transfers, assets, saveAssets, saveTransfers, isAdmin, myWHid, session, syncAfterRpc, nav }) {
-  const list = transfers.filter((item) => item.status === "pending" && (isAdmin || item.toWhId === myWHid));
+  const list = transfers.filter((item) => item.status === "pending" && (isAdmin || item.toResponsibleId === session.user.id));
   return (
     <div>
       <Tag>ПЕРЕДАЧИ</Tag>
@@ -1179,7 +1211,7 @@ function AdminPanel(props) {
         ))}
       </div>
       {tab === "whs" && <WarehouseAdmin warehouses={warehouses} users={users} assets={assets} saveWarehouses={saveWarehouses} />}
-      {tab === "users" && <UserAdmin users={users} warehouses={warehouses} createUser={createUser} updateUser={updateUser} resetUserPassword={resetUserPassword} deleteUser={deleteUser} hasSupabaseConfig={hasSupabaseConfig} />}
+      {tab === "users" && <UserAdmin users={users} warehouses={warehouses} saveWarehouses={saveWarehouses} createUser={createUser} updateUser={updateUser} resetUserPassword={resetUserPassword} deleteUser={deleteUser} hasSupabaseConfig={hasSupabaseConfig} />}
       {tab === "cats" && <CategoryAdmin categories={categories} saveCategories={saveCategories} />}
     </div>
   );
@@ -1300,15 +1332,47 @@ function WarehouseAdmin({ warehouses, users, assets, saveWarehouses }) {
   );
 }
 
-function UserAdmin({ users, warehouses, createUser, updateUser, resetUserPassword, deleteUser, hasSupabaseConfig }) {
-  const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseId: "", authUserId: "" });
+function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, resetUserPassword, deleteUser, hasSupabaseConfig }) {
+  const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseIds: [], authUserId: "" });
   const [editId, setEditId] = useState("");
   const [saving, setSaving] = useState(false);
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const reset = () => {
-    setForm({ name: "", login: "", password: "", role: "user", warehouseId: "", authUserId: "" });
+    setForm({ name: "", login: "", password: "", role: "user", warehouseIds: [], authUserId: "" });
     setEditId("");
   };
+
+  const getUserWarehouseIds = (userId) =>
+    warehouses
+      .filter((w) => (w.responsibleIds || []).includes(userId) || w.id === (users.find((u) => u.id === userId)?.warehouseId))
+      .map((w) => w.id);
+
+  const toggleWarehouse = (id) =>
+    setForm((p) => ({
+      ...p,
+      warehouseIds: p.warehouseIds.includes(id)
+        ? p.warehouseIds.filter((x) => x !== id)
+        : [...p.warehouseIds, id],
+    }));
+
+  const syncWarehousesForUser = async (userId, nextWarehouseIds) => {
+    const next = warehouses.map((w) => {
+      const shouldInclude = nextWarehouseIds.includes(w.id);
+      const currentIds = w.responsibleIds || [];
+      const contains = currentIds.includes(userId);
+      if (shouldInclude && !contains) {
+        return { ...w, responsibleIds: [...currentIds, userId] };
+      }
+      if (!shouldInclude && contains) {
+        return { ...w, responsibleIds: currentIds.filter((id) => id !== userId) };
+      }
+      return w;
+    });
+    const changed = next.some((w, i) => w !== warehouses[i]);
+    if (!changed) return true;
+    return saveWarehouses(next);
+  };
+
   const submit = async () => {
     if (!form.name.trim() || !form.login.trim()) return;
     const password = form.password.trim();
@@ -1321,10 +1385,13 @@ function UserAdmin({ users, warehouses, createUser, updateUser, resetUserPasswor
       alert("Auth User ID должен быть валидным UUID или пустым.");
       return;
     }
+    const warehouseIds = form.role === "admin" ? [] : form.warehouseIds;
+    const primaryWarehouseId = warehouseIds[0] || null;
     const payload = {
-      ...form,
       name: form.name.trim(),
       login: form.login.trim(),
+      role: form.role,
+      warehouseId: primaryWarehouseId,
       authUserId: authUserId || null,
     };
     if (!editId || password) {
@@ -1332,12 +1399,18 @@ function UserAdmin({ users, warehouses, createUser, updateUser, resetUserPasswor
     }
     setSaving(true);
     try {
+      let userId = editId;
       if (editId) {
         const ok = await updateUser(editId, payload);
         if (!ok) return;
       } else {
-        const ok = await createUser({ id: `u${uid()}`, ...payload });
+        userId = `u${uid()}`;
+        const ok = await createUser({ id: userId, ...payload });
         if (!ok) return;
+      }
+      const ok2 = await syncWarehousesForUser(userId, warehouseIds);
+      if (!ok2) {
+        alert("Пользователь сохранён, но не удалось обновить привязки к складам.");
       }
       reset();
     } finally {
@@ -1377,13 +1450,37 @@ function UserAdmin({ users, warehouses, createUser, updateUser, resetUserPasswor
           </select>
         </Field>
         {form.role === "user" && (
-          <Field label="Привязанный склад">
-            <select style={inputStyle} value={form.warehouseId} onChange={(e) => setForm((p) => ({ ...p, warehouseId: e.target.value }))}>
-              <option value="">— не выбран —</option>
+          <Field label="Склады, за которые отвечает пользователь">
+            <div
+              style={{
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: 10,
+                padding: 10,
+                background: COLORS.bg,
+                display: "grid",
+                gap: 6,
+                maxHeight: 220,
+                overflowY: "auto",
+              }}
+            >
+              {warehouses.length === 0 && <Muted>Нет складов</Muted>}
               {warehouses.map((warehouse) => (
-                <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
+                <label
+                  key={warehouse.id}
+                  style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={form.warehouseIds.includes(warehouse.id)}
+                    onChange={() => toggleWarehouse(warehouse.id)}
+                  />
+                  <span>{warehouse.name}</span>
+                </label>
               ))}
-            </select>
+            </div>
+            <Muted style={{ marginTop: 6 }}>
+              Первый выбранный склад становится «основным» для фильтров по умолчанию.
+            </Muted>
           </Field>
         )}
         <div style={{ display: "flex", gap: 8 }}>
@@ -1392,15 +1489,21 @@ function UserAdmin({ users, warehouses, createUser, updateUser, resetUserPasswor
         </div>
       </div>
       <div style={{ display: "grid", gap: 8 }}>
-        {users.map((user) => (
+        {users.map((user) => {
+          const userWhIds = getUserWarehouseIds(user.id);
+          const whNames = userWhIds
+            .map((id) => warehouses.find((w) => w.id === id)?.name)
+            .filter(Boolean)
+            .join(", ");
+          return (
           <Card key={user.id} style={{ background: COLORS.bg }}>
             <Row>
               <div>
                 <div style={{ fontWeight: 700 }}>{user.name}</div>
-                <Muted>{user.login} · {user.role}{user.warehouseId ? ` · ${warehouses.find((w) => w.id === user.warehouseId)?.name || ""}` : ""}</Muted>
+                <Muted>{user.login} · {user.role}{whNames ? ` · ${whNames}` : ""}</Muted>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => { setEditId(user.id); setForm({ name: user.name, login: user.login, password: "", role: user.role, warehouseId: user.warehouseId || "", authUserId: user.authUserId || "" }); }}>
+                <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => { setEditId(user.id); setForm({ name: user.name, login: user.login, password: "", role: user.role, warehouseIds: userWhIds, authUserId: user.authUserId || "" }); }}>
                   Редактировать
                 </button>
                 <button
@@ -1431,7 +1534,8 @@ function UserAdmin({ users, warehouses, createUser, updateUser, resetUserPasswor
               </div>
             </Row>
           </Card>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
