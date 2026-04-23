@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
+import {
+  rpcApproveWriteoff,
+  rpcConfirmTransfer,
+  rpcRejectTransfer,
+  rpcRejectWriteoff,
+  rpcRequestTransfer,
+  rpcRequestWriteoff,
+} from "./lib/repository";
+import { getSupabaseSession, hasSupabaseConfig, signInWithPassword, signOut as signOutSupabase } from "./lib/supabase";
+import { useAppState } from "./state/useAppState";
+import { Login } from "./features/auth/Login";
+import { Topbar } from "./features/layout/Topbar";
 
 const UNITS = ["шт", "л", "кг", "т", "м", "м²", "м³", "уп", "рул", "компл", "пара", "box"];
 const DEFAULT_CATEGORIES = [
@@ -23,9 +35,9 @@ const STATUS_META = {
   "Списан": { color: "#ef4444", icon: "●" },
 };
 const DEFAULT_USERS = [
-  { id: "u1", name: "Администратор", login: "admin", password: "admin123", role: "admin", warehouseId: "" },
-  { id: "u2", name: "Иванов А.А.", login: "sklad1", password: "1234", role: "user", warehouseId: "w1" },
-  { id: "u3", name: "Петров Б.Б.", login: "sklad2", password: "1234", role: "user", warehouseId: "w2" },
+  { id: "u1", name: "Администратор", login: "admin", role: "admin", warehouseId: "", authUserId: null },
+  { id: "u2", name: "Иванов А.А.", login: "sklad1", role: "user", warehouseId: "w1", authUserId: null },
+  { id: "u3", name: "Петров Б.Б.", login: "sklad2", role: "user", warehouseId: "w2", authUserId: null },
 ];
 const DEFAULT_WAREHOUSES = [
   { id: "w1", name: "Главный склад", responsibleIds: ["u2"] },
@@ -54,24 +66,6 @@ const inputStyle = {
   outline: "none",
 };
 
-const storage = {
-  get(key, fallback) {
-    try {
-      const value = localStorage.getItem(key);
-      return value ? JSON.parse(value) : fallback;
-    } catch {
-      return fallback;
-    }
-  },
-  set(key, value) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-      // ignore storage failures
-    }
-  },
-};
-
 const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const nowISO = () => new Date().toISOString();
 const fmt = (value) =>
@@ -81,65 +75,119 @@ const trNo = () => `НК-${String(Date.now()).slice(-6)}`;
 const qtyStr = (qty, unit) => `${Number(qty)} ${unit || "шт"}`;
 
 export default function App() {
-  const [ready, setReady] = useState(false);
-  const [users, setUsers] = useState([]);
-  const [warehouses, setWarehouses] = useState([]);
-  const [assets, setAssets] = useState([]);
-  const [transfers, setTransfers] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [session, setSession] = useState(null);
   const [page, setPage] = useState("warehouses");
   const [ctx, setCtx] = useState({});
 
-  useEffect(() => {
-    setUsers(storage.get("tmc_users", DEFAULT_USERS));
-    setWarehouses(storage.get("tmc_whs", DEFAULT_WAREHOUSES));
-    setAssets(storage.get("tmc_assets", []));
-    setTransfers(storage.get("tmc_transfers", []));
-    setCategories(storage.get("tmc_categories", DEFAULT_CATEGORIES));
-    setSession(storage.get("tmc_session", null));
-    setReady(true);
-  }, []);
+  const {
+    ready,
+    users,
+    warehouses,
+    assets,
+    transfers,
+    categories,
+    session,
+    saveUsers,
+    saveWarehouses,
+    saveAssets,
+    saveTransfers,
+    saveCategories,
+    saveSession,
+    hydrateFromCloud,
+  } = useAppState(
+    useMemo(
+      () => ({
+        users: DEFAULT_USERS,
+        warehouses: DEFAULT_WAREHOUSES,
+        categories: DEFAULT_CATEGORIES,
+      }),
+      []
+    )
+  );
 
-  const saveUsers = (value) => {
-    setUsers(value);
-    storage.set("tmc_users", value);
-  };
-  const saveWarehouses = (value) => {
-    setWarehouses(value);
-    storage.set("tmc_whs", value);
-  };
-  const saveAssets = (value) => {
-    setAssets(value);
-    storage.set("tmc_assets", value);
-  };
-  const saveTransfers = (value) => {
-    setTransfers(value);
-    storage.set("tmc_transfers", value);
-  };
-  const saveCategories = (value) => {
-    setCategories(value);
-    storage.set("tmc_categories", value);
-  };
+  const login = async ({ login: loginValue, password }) => {
+    const normalizedLogin = loginValue.trim().toLowerCase();
+    let matchedUser = null;
 
-  const login = (user) => {
-    const next = { user };
-    setSession(next);
-    storage.set("tmc_session", next);
+    if (hasSupabaseConfig) {
+      const authEmail = normalizedLogin.includes("@") ? normalizedLogin : `${normalizedLogin}@tmc.local`;
+      const authResult = await signInWithPassword(authEmail, password);
+      const authId = authResult.user?.id;
+      matchedUser = users.find((user) => user.authUserId === authId || user.login.toLowerCase() === normalizedLogin);
+    } else {
+      matchedUser = users.find((user) => user.login.toLowerCase() === normalizedLogin);
+    }
+
+    if (!matchedUser) {
+      throw new Error("Пользователь авторизован, но его профиль не найден в tmc_users.");
+    }
+
+    const next = { user: matchedUser };
+    saveSession(next);
     setPage("warehouses");
   };
-  const logout = () => {
-    setSession(null);
-    storage.set("tmc_session", null);
+
+  const logout = async () => {
+    try {
+      if (hasSupabaseConfig) {
+        await signOutSupabase();
+      }
+    } finally {
+      saveSession(null);
+    }
   };
+
+  const syncAfterRpc = async (rpcCall) => {
+    try {
+      const cloud = await rpcCall();
+      hydrateFromCloud(cloud);
+      const authSession = await getSupabaseSession();
+      if (!authSession?.user || !session?.user) return;
+      const refreshedUser =
+        cloud.users?.find((user) => user.authUserId === authSession.user.id || user.id === session.user.id) || session.user;
+      saveSession({ user: refreshedUser });
+    } catch (error) {
+      console.error(error);
+      alert("Ошибка серверной операции. Проверьте подключение и права доступа.");
+    }
+  };
+
   const nav = (nextPage, nextCtx = {}) => {
     setPage(nextPage);
     setCtx(nextCtx);
     window.scrollTo({ top: 0 });
   };
 
+  useEffect(() => {
+    if (!ready || !hasSupabaseConfig || !session) return;
+    let alive = true;
+    (async () => {
+      const authSession = await getSupabaseSession();
+      if (!alive) return;
+      if (!authSession?.user) {
+        saveSession(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [ready, session, saveSession]);
+
   if (!ready) return <Splash />;
-  if (!session) return <Login users={users} onLogin={login} />;
+  if (!session) {
+    return (
+      <Login
+        onLogin={login}
+        hasSupabaseConfig={hasSupabaseConfig}
+        Field={Field}
+        inputStyle={inputStyle}
+        buttonStyle={buttonStyle}
+        COLORS={COLORS}
+        Tag={Tag}
+        H1={H1}
+        ErrBox={ErrBox}
+      />
+    );
+  }
 
   const isAdmin = session.user.role === "admin";
   const myWHid = session.user.warehouseId;
@@ -161,6 +209,7 @@ export default function App() {
     saveAssets,
     saveTransfers,
     saveCategories,
+    syncAfterRpc,
     nav,
   };
 
@@ -175,6 +224,8 @@ export default function App() {
         incomingCount={incoming.length}
         writeoffCount={pendingWO.length}
         lowStockCount={lowStock.length}
+        COLORS={COLORS}
+        buttonStyle={buttonStyle}
       />
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
         {page === "warehouses" && <WarehouseList {...shared} lowStock={lowStock} />}
@@ -194,100 +245,6 @@ function Splash() {
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", color: COLORS.muted }}>
       Загрузка...
-    </div>
-  );
-}
-
-function Topbar({ session, isAdmin, page, nav, logout, incomingCount, writeoffCount, lowStockCount }) {
-  return (
-    <div style={{ position: "sticky", top: 0, zIndex: 20, background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ cursor: "pointer" }} onClick={() => nav("warehouses")}>
-          <div style={{ fontSize: 11, letterSpacing: 2, color: COLORS.accent }}>TMC TRACKER</div>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>ТМЦ Трекер</div>
-        </div>
-        <div style={{ flex: 1 }} />
-        <NavButton active={page === "warehouses"} onClick={() => nav("warehouses")}>
-          Склады{lowStockCount ? ` (${lowStockCount} мало)` : ""}
-        </NavButton>
-        <NavButton active={page === "incoming"} onClick={() => nav("incoming")}>
-          Входящие{incomingCount ? ` (${incomingCount})` : ""}
-        </NavButton>
-        {isAdmin && (
-          <>
-            <NavButton active={page === "writeoffs"} onClick={() => nav("writeoffs")}>
-              Списания{writeoffCount ? ` (${writeoffCount})` : ""}
-            </NavButton>
-            <NavButton active={page === "export"} onClick={() => nav("export")}>
-              Экспорт
-            </NavButton>
-            <NavButton active={page === "admin"} onClick={() => nav("admin")}>
-              Панель
-            </NavButton>
-          </>
-        )}
-        <div style={{ padding: "8px 10px", borderRadius: 10, background: COLORS.bg, border: `1px solid ${COLORS.border}`, fontSize: 13 }}>
-          {session.user.name}
-        </div>
-        <button onClick={logout} style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })}>
-          Выйти
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function NavButton({ children, active, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        ...buttonStyle(active ? `${COLORS.accent}22` : "transparent", { border: `1px solid ${active ? COLORS.accent : COLORS.border}` }),
-        color: active ? COLORS.accent : COLORS.text,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Login({ users, onLogin }) {
-  const [login, setLogin] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-
-  const submit = () => {
-    const user = users.find((item) => item.login === login.trim() && item.password === password);
-    if (!user) {
-      setError("Неверный логин или пароль");
-      return;
-    }
-    onLogin(user);
-  };
-
-  return (
-    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 16 }}>
-      <div style={{ width: "100%", maxWidth: 420, background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 24 }}>
-        <Tag>АВТОРИЗАЦИЯ</Tag>
-        <H1>Вход</H1>
-        {error && <ErrBox>{error}</ErrBox>}
-        <Field label="Логин">
-          <input style={inputStyle} value={login} onChange={(e) => setLogin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
-        </Field>
-        <Field label="Пароль">
-          <input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
-        </Field>
-        <button onClick={submit} style={{ ...buttonStyle(COLORS.accent), width: "100%", marginTop: 8 }}>
-          Войти
-        </button>
-        <div style={{ marginTop: 16, fontSize: 12, color: COLORS.muted, lineHeight: 1.9 }}>
-          admin / admin123
-          <br />
-          sklad1 / 1234
-          <br />
-          sklad2 / 1234
-        </div>
-      </div>
     </div>
   );
 }
@@ -440,7 +397,7 @@ function AssetRow({ asset, users, onClick }) {
 }
 
 function AssetDetail(props) {
-  const { assetId, assets, warehouses, users, isAdmin, myWHid, session, saveAssets, transfers, saveTransfers, nav } = props;
+  const { assetId, assets, warehouses, users, isAdmin, myWHid, session, saveAssets, transfers, saveTransfers, syncAfterRpc, nav } = props;
   const asset = assets.find((item) => item.id === assetId);
   const [showTransfer, setShowTransfer] = useState(false);
   const [showWriteoff, setShowWriteoff] = useState(false);
@@ -471,7 +428,7 @@ function AssetDetail(props) {
     reader.readAsDataURL(file);
   };
 
-  const createTransfer = () => {
+  const createTransfer = async () => {
     if (!transferForm.toWhId) return alert("Выберите склад назначения");
     const toWarehouse = warehouses.find((item) => item.id === transferForm.toWhId);
     const qty = hasQty ? Number(transferForm.qty) : null;
@@ -502,48 +459,61 @@ function AssetDetail(props) {
       confirmedBy: null,
     };
 
-    saveTransfers([...transfers, transfer]);
-
-    if (hasQty) {
-      updateAsset({
-        qty: asset.qty - qty,
-        history: addHistory({
-          date: nowISO(),
-          action: `Отправлено (${qtyStr(qty, asset.unit)})`,
-          warehouseId: asset.warehouseId,
-          responsibleId: asset.responsibleId,
-          qty,
-          status: "В пути",
-          by: session.user.name,
-          notes: transferForm.notes,
-        }),
-      });
+    if (hasSupabaseConfig) {
+      await syncAfterRpc(() =>
+        rpcRequestTransfer({
+          ...transfer,
+          actor: session.user.name,
+        })
+      );
     } else {
-      updateAsset({
-        status: "В пути",
-        history: addHistory({
-          date: nowISO(),
-          action: `Отправлено на ${toWarehouse?.name || "склад"}`,
-          warehouseId: asset.warehouseId,
-          responsibleId: asset.responsibleId,
+      saveTransfers([...transfers, transfer]);
+
+      if (hasQty) {
+        updateAsset({
+          qty: asset.qty - qty,
+          history: addHistory({
+            date: nowISO(),
+            action: `Отправлено (${qtyStr(qty, asset.unit)})`,
+            warehouseId: asset.warehouseId,
+            responsibleId: asset.responsibleId,
+            qty,
+            status: "В пути",
+            by: session.user.name,
+            notes: transferForm.notes,
+          }),
+        });
+      } else {
+        updateAsset({
           status: "В пути",
-          by: session.user.name,
-          notes: transferForm.notes,
-        }),
-      });
+          history: addHistory({
+            date: nowISO(),
+            action: `Отправлено на ${toWarehouse?.name || "склад"}`,
+            warehouseId: asset.warehouseId,
+            responsibleId: asset.responsibleId,
+            status: "В пути",
+            by: session.user.name,
+            notes: transferForm.notes,
+          }),
+        });
+      }
     }
 
     setTransferForm({ toWhId: "", responsibleId: "", qty: "", notes: "" });
     setShowTransfer(false);
   };
 
-  const requestWriteoff = () => {
+  const requestWriteoff = async () => {
     const qty = hasQty ? Number(writeoffForm.qty) : null;
     if (hasQty && (!qty || qty <= 0 || qty > asset.qty)) {
       return alert(`Введите количество от 0.01 до ${asset.qty}`);
     }
 
-    if (isAdmin) {
+    if (hasSupabaseConfig && isAdmin) {
+      await syncAfterRpc(() => rpcApproveWriteoff(asset.id, qty, writeoffForm.notes, session.user.name));
+    } else if (hasSupabaseConfig) {
+      await syncAfterRpc(() => rpcRequestWriteoff(asset.id, qty, writeoffForm.notes, session.user.name));
+    } else if (isAdmin) {
       approveWriteoff(asset, qty, writeoffForm.notes, saveAssets, assets, session.user.name);
     } else {
       updateAsset({
@@ -566,13 +536,21 @@ function AssetDetail(props) {
     setShowWriteoff(false);
   };
 
-  const confirmIncoming = () => {
+  const confirmIncoming = async () => {
     if (!pendingTransfer) return;
+    if (hasSupabaseConfig) {
+      await syncAfterRpc(() => rpcConfirmTransfer(pendingTransfer.id, session.user.name));
+      return;
+    }
     confirmTransfer(pendingTransfer, assets, saveAssets, transfers, saveTransfers, session.user.name);
   };
 
-  const rejectIncoming = () => {
+  const rejectIncoming = async () => {
     if (!pendingTransfer) return;
+    if (hasSupabaseConfig) {
+      await syncAfterRpc(() => rpcRejectTransfer(pendingTransfer.id, session.user.name));
+      return;
+    }
     rejectTransfer(pendingTransfer, assets, saveAssets, transfers, saveTransfers, session.user.name);
   };
 
@@ -725,7 +703,7 @@ function AssetDetail(props) {
   );
 }
 
-function IncomingPage({ transfers, assets, saveAssets, saveTransfers, isAdmin, myWHid, session, nav }) {
+function IncomingPage({ transfers, assets, saveAssets, saveTransfers, isAdmin, myWHid, session, syncAfterRpc, nav }) {
   const list = transfers.filter((item) => item.status === "pending" && (isAdmin || item.toWhId === myWHid));
   return (
     <div>
@@ -750,8 +728,26 @@ function IncomingPage({ transfers, assets, saveAssets, saveTransfers, isAdmin, m
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
               <button style={buttonStyle("#8b5cf6")} onClick={() => nav("waybill", { transferId: transfer.id })}>Накладная</button>
-              <button style={buttonStyle(COLORS.accent)} onClick={() => confirmTransfer(transfer, assets, saveAssets, transfers, saveTransfers, session.user.name)}>Подтвердить</button>
-              <button style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })} onClick={() => rejectTransfer(transfer, assets, saveAssets, transfers, saveTransfers, session.user.name)}>Отклонить</button>
+              <button
+                style={buttonStyle(COLORS.accent)}
+                onClick={() =>
+                  hasSupabaseConfig
+                    ? syncAfterRpc(() => rpcConfirmTransfer(transfer.id, session.user.name))
+                    : confirmTransfer(transfer, assets, saveAssets, transfers, saveTransfers, session.user.name)
+                }
+              >
+                Подтвердить
+              </button>
+              <button
+                style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })}
+                onClick={() =>
+                  hasSupabaseConfig
+                    ? syncAfterRpc(() => rpcRejectTransfer(transfer.id, session.user.name))
+                    : rejectTransfer(transfer, assets, saveAssets, transfers, saveTransfers, session.user.name)
+                }
+              >
+                Отклонить
+              </button>
             </div>
           </Card>
         ))}
@@ -819,7 +815,7 @@ function WaybillPage({ transferId, transfers, assets, nav }) {
   );
 }
 
-function WriteoffPage({ assets, saveAssets, session, nav }) {
+function WriteoffPage({ assets, saveAssets, session, syncAfterRpc, nav }) {
   const pending = assets.filter((item) => item.status === "На списание");
   return (
     <div>
@@ -835,8 +831,26 @@ function WriteoffPage({ assets, saveAssets, session, nav }) {
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => nav("asset", { assetId: asset.id })}>Открыть</button>
-                <button style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })} onClick={() => rejectWriteoff(asset, assets, saveAssets, session.user.name)}>Отклонить</button>
-                <button style={buttonStyle(COLORS.danger)} onClick={() => approveWriteoff(asset, asset.pendingWOqty || asset.qty, "Подтверждено администратором", saveAssets, assets, session.user.name)}>Списать</button>
+                <button
+                  style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })}
+                  onClick={() =>
+                    hasSupabaseConfig
+                      ? syncAfterRpc(() => rpcRejectWriteoff(asset.id, session.user.name))
+                      : rejectWriteoff(asset, assets, saveAssets, session.user.name)
+                  }
+                >
+                  Отклонить
+                </button>
+                <button
+                  style={buttonStyle(COLORS.danger)}
+                  onClick={() =>
+                    hasSupabaseConfig
+                      ? syncAfterRpc(() => rpcApproveWriteoff(asset.id, asset.pendingWOqty || asset.qty, "Подтверждено администратором", session.user.name))
+                      : approveWriteoff(asset, asset.pendingWOqty || asset.qty, "Подтверждено администратором", saveAssets, assets, session.user.name)
+                  }
+                >
+                  Списать
+                </button>
               </div>
             </Row>
           </Card>
@@ -988,15 +1002,34 @@ function WarehouseAdmin({ warehouses, users, assets, saveWarehouses }) {
 }
 
 function UserAdmin({ users, warehouses, saveUsers }) {
-  const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseId: "" });
+  const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseId: "", authUserId: "" });
   const [editId, setEditId] = useState("");
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const reset = () => {
-    setForm({ name: "", login: "", password: "", role: "user", warehouseId: "" });
+    setForm({ name: "", login: "", password: "", role: "user", warehouseId: "", authUserId: "" });
     setEditId("");
   };
   const submit = () => {
     if (!form.name.trim() || !form.login.trim()) return;
-    const payload = { ...form, name: form.name.trim(), login: form.login.trim() };
+    const password = form.password.trim();
+    if (!editId && !password) {
+      alert("Для нового пользователя укажите пароль.");
+      return;
+    }
+    const authUserId = form.authUserId.trim();
+    if (authUserId && !uuidRegex.test(authUserId)) {
+      alert("Auth User ID должен быть валидным UUID или пустым.");
+      return;
+    }
+    const payload = {
+      ...form,
+      name: form.name.trim(),
+      login: form.login.trim(),
+      authUserId: authUserId || null,
+    };
+    if (!editId || password) {
+      payload.password = password;
+    }
     if (editId) {
       saveUsers(users.map((item) => (item.id === editId ? { ...item, ...payload } : item)));
     } else {
@@ -1009,8 +1042,11 @@ function UserAdmin({ users, warehouses, saveUsers }) {
       <SectionTitle>Пользователи</SectionTitle>
       <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
         <Field label="ФИО"><input style={inputStyle} value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field>
-        <Field label="Логин"><input style={inputStyle} value={form.login} onChange={(e) => setForm((p) => ({ ...p, login: e.target.value }))} /></Field>
-        <Field label="Пароль"><input style={inputStyle} value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} /></Field>
+        <Field label="Email (Supabase Auth)"><input style={inputStyle} value={form.login} onChange={(e) => setForm((p) => ({ ...p, login: e.target.value }))} /></Field>
+        <Field label={editId ? "Пароль (оставьте пустым, чтобы не менять)" : "Пароль *"}>
+          <input type="password" style={inputStyle} value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
+        </Field>
+        <Field label="Auth User ID (uuid, optional)"><input style={inputStyle} value={form.authUserId} onChange={(e) => setForm((p) => ({ ...p, authUserId: e.target.value }))} /></Field>
         <Field label="Роль">
           <select style={inputStyle} value={form.role} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}>
             <option value="user">user</option>
@@ -1041,7 +1077,7 @@ function UserAdmin({ users, warehouses, saveUsers }) {
                 <Muted>{user.login} · {user.role}{user.warehouseId ? ` · ${warehouses.find((w) => w.id === user.warehouseId)?.name || ""}` : ""}</Muted>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => { setEditId(user.id); setForm({ name: user.name, login: user.login, password: user.password, role: user.role, warehouseId: user.warehouseId || "" }); }}>
+                <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => { setEditId(user.id); setForm({ name: user.name, login: user.login, password: "", role: user.role, warehouseId: user.warehouseId || "", authUserId: user.authUserId || "" }); }}>
                   Редактировать
                 </button>
                 <button style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })} onClick={() => saveUsers(users.filter((item) => item.id !== user.id))}>
