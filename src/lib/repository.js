@@ -95,7 +95,9 @@ function toAssetRow(asset, photoOverride) {
 
 function ensureConfigured() {
   if (!hasSupabaseConfig || !supabase) {
-    throw new Error("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
+    throw new Error(
+      "Supabase is not configured. Set VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY (or NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY)."
+    );
   }
 }
 
