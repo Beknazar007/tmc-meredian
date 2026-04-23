@@ -367,13 +367,25 @@ function Splash() {
   );
 }
 
-function WarehouseList({ warehouses, assets, users, isAdmin, myWHid, nav, lowStock, transfers }) {
-  const visible = isAdmin ? warehouses : warehouses.filter((item) => !myWHid || item.id === myWHid);
+function WarehouseList({ warehouses, assets, users, isAdmin, myWHid, nav, lowStock, transfers, session }) {
+  const userId = session?.user?.id;
+  const visible = isAdmin
+    ? warehouses
+    : warehouses.filter((item) => {
+        const ids = item.responsibleIds || [];
+        return (userId && ids.includes(userId)) || (myWHid && item.id === myWHid);
+      });
   return (
     <div>
       <Tag>ОБЗОР</Tag>
       <H1>Склады</H1>
-      {lowStock.length > 0 && <InfoBanner color={COLORS.warn}>Минимальный остаток достигнут у {lowStock.length} позиций.</InfoBanner>}
+      {(() => {
+        const visibleIds = new Set(visible.map((w) => w.id));
+        const scopedLow = isAdmin ? lowStock : lowStock.filter((a) => visibleIds.has(a.warehouseId));
+        return scopedLow.length > 0 ? (
+          <InfoBanner color={COLORS.warn}>Минимальный остаток достигнут у {scopedLow.length} позиций.</InfoBanner>
+        ) : null;
+      })()}
       <Grid>
         {visible.map((warehouse) => {
           const whAssets = assets.filter((item) => item.warehouseId === warehouse.id && item.status !== "Списан");
@@ -408,7 +420,14 @@ function WarehouseView(props) {
   if (!warehouse) return <Empty text="Склад не найден" />;
 
   const responsibleIds = warehouse.responsibleIds || [];
-  const canAdd = isAdmin || responsibleIds.includes(session.user.id) || myWHid === warehouse.id || !myWHid;
+  const userId = session?.user?.id;
+  const canAccess =
+    isAdmin ||
+    (userId && responsibleIds.includes(userId)) ||
+    (myWHid && warehouse.id === myWHid);
+  if (!canAccess) return <Empty text="У вас нет доступа к этому складу" />;
+
+  const canAdd = isAdmin || (userId && responsibleIds.includes(userId)) || myWHid === warehouse.id;
   const list = assets
     .filter((item) => item.warehouseId === warehouse.id)
     .filter((item) => {
