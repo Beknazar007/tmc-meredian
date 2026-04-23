@@ -249,9 +249,13 @@ language plpgsql
 as $$
 begin
   delete from public.tmc_warehouse_responsibles where warehouse_id = new.id;
+  -- Only sync ids that still exist in tmc_users; stale ids (e.g. from a
+  -- concurrent user deletion or an out-of-date client payload) are skipped
+  -- so the save doesn't fail with a FK violation.
   insert into public.tmc_warehouse_responsibles (warehouse_id, user_id)
-  select new.id, value::text
-  from jsonb_array_elements_text(coalesce(new.responsible_ids, '[]'::jsonb));
+  select new.id, v.value::text
+  from jsonb_array_elements_text(coalesce(new.responsible_ids, '[]'::jsonb)) as v
+  where exists (select 1 from public.tmc_users u where u.id = v.value::text);
   return new;
 end;
 $$;
@@ -261,10 +265,38 @@ create trigger trg_sync_warehouse_responsibles
 after insert or update of responsible_ids on public.tmc_warehouses
 for each row execute function public.sync_warehouse_responsibles();
 
+-- Before a user is deleted, strip their id from every warehouse's
+-- responsible_ids jsonb array so no stale reference can break later saves.
+create or replace function public.prune_user_from_warehouses()
+returns trigger
+language plpgsql
+as $$
+begin
+  update public.tmc_warehouses
+  set responsible_ids = coalesce(
+    (
+      select jsonb_agg(v.value)
+      from jsonb_array_elements_text(coalesce(responsible_ids, '[]'::jsonb)) as v
+      where v.value::text <> old.id
+    ),
+    '[]'::jsonb
+  )
+  where responsible_ids is not null
+    and responsible_ids ? old.id;
+  return old;
+end;
+$$;
+
+drop trigger if exists trg_prune_user_from_warehouses on public.tmc_users;
+create trigger trg_prune_user_from_warehouses
+before delete on public.tmc_users
+for each row execute function public.prune_user_from_warehouses();
+
 insert into public.tmc_warehouse_responsibles (warehouse_id, user_id)
-select w.id, value::text
+select w.id, v.value::text
 from public.tmc_warehouses w,
-jsonb_array_elements_text(coalesce(w.responsible_ids, '[]'::jsonb)) as value
+jsonb_array_elements_text(coalesce(w.responsible_ids, '[]'::jsonb)) as v
+where exists (select 1 from public.tmc_users u where u.id = v.value::text)
 on conflict do nothing;
 
 alter table public.tmc_users enable row level security;
