@@ -10,9 +10,12 @@
 6. Copy `.env.example` to `.env` and fill:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
-7. Deploy Edge Function for admin user creation:
+7. Deploy Edge Functions used for admin user management:
    - `supabase functions deploy create-user`
-   - (if needed) `supabase secrets set SUPABASE_ANON_KEY=... SUPABASE_SERVICE_ROLE_KEY=...`
+   - `supabase functions deploy delete-user`
+   - `supabase functions deploy reset-password`
+   - `supabase functions deploy update-user-role`
+   - `supabase secrets set SUPABASE_SERVICE_ROLE_KEY=...` (SUPABASE_URL is auto-provided)
 
 On first app startup, local browser data is migrated to Supabase once, then cloud is the source of truth.
 
@@ -22,7 +25,15 @@ On first app startup, local browser data is migrated to Supabase once, then clou
 2. (Optional for demo users) run `supabase/seed_default_users.sql`.
 3. In Supabase Storage create a **public** bucket: `asset-photos`.
 4. Verify Auth users exist and `public.tmc_users.auth_user_id` is linked to `auth.users.id`.
-5. Deploy function `create-user` from `supabase/functions/create-user/index.ts`.
+5. Deploy Edge Functions from `supabase/functions/`:
+   - `create-user`
+   - `delete-user`
+   - `reset-password`
+   - `update-user-role`
+
+### Realtime
+
+`supabase/schema.sql` automatically adds `tmc_users`, `tmc_warehouses`, `tmc_assets`, `tmc_transfers`, `tmc_categories` to the `supabase_realtime` publication, so the frontend receives live updates instead of 15s polling. No extra configuration is needed — run the schema once.
 
 ## Run
 

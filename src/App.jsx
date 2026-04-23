@@ -10,6 +10,7 @@ import {
   rpcRequestWriteoff,
 } from "./lib/repository";
 import { getSupabaseSession, hasSupabaseConfig, signInWithPassword, signOut as signOutSupabase } from "./lib/supabase";
+import { subscribeToCloudChanges } from "./lib/realtime";
 import { useAppState } from "./state/useAppState";
 import { Login } from "./features/auth/Login";
 import { Topbar } from "./features/layout/Topbar";
@@ -81,6 +82,7 @@ export default function App() {
     saveUsers,
     createUser,
     updateUser,
+    resetUserPassword,
     deleteUser,
     saveWarehouses,
     saveAssets,
@@ -88,6 +90,7 @@ export default function App() {
     saveCategories,
     saveSession,
     hydrateFromCloud,
+    refreshSlice,
   } = useAppState(
     useMemo(
       () => ({
@@ -246,23 +249,45 @@ export default function App() {
       }
     };
 
+    // Initial hydrate on session establish; subsequent updates come via realtime.
     refreshFromCloud();
-    const timer = setInterval(refreshFromCloud, 15000);
+
+    // Coalesce bursts of realtime events into a single slice refresh per tick.
+    const pending = new Set();
+    let timer = null;
+    const flush = () => {
+      timer = null;
+      const slices = Array.from(pending);
+      pending.clear();
+      slices.forEach((slice) => {
+        if (!alive) return;
+        void refreshSlice(slice);
+      });
+    };
+    const unsubscribe = subscribeToCloudChanges((slice) => {
+      if (!alive) return;
+      pending.add(slice);
+      if (timer) return;
+      timer = setTimeout(flush, 150);
+    });
+
+    // Fallback: on focus or return-to-tab, pull a fresh full state in case
+    // we dropped a realtime event while the tab was hidden.
     const onFocus = () => refreshFromCloud();
     const onVisibility = () => {
       if (document.visibilityState === "visible") refreshFromCloud();
     };
-
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       alive = false;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
+      unsubscribe();
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [ready, session?.user?.id, hydrateFromCloud, saveSession]);
+  }, [ready, session?.user?.id, hydrateFromCloud, saveSession, refreshSlice]);
 
   if (!ready) return <Splash />;
   if (!session) {
@@ -299,7 +324,9 @@ export default function App() {
     saveUsers,
     createUser,
     updateUser,
+    resetUserPassword,
     deleteUser,
+    hasSupabaseConfig,
     saveWarehouses,
     saveAssets,
     saveTransfers,
@@ -960,7 +987,7 @@ function WriteoffPage({ assets, saveAssets, session, syncAfterRpc, nav }) {
 }
 
 function AdminPanel(props) {
-  const { users, warehouses, assets, categories, createUser, updateUser, deleteUser, hasSupabaseConfig, saveWarehouses, saveCategories } = props;
+  const { users, warehouses, assets, categories, createUser, updateUser, resetUserPassword, deleteUser, hasSupabaseConfig, saveWarehouses, saveCategories } = props;
   const [tab, setTab] = useState("whs");
   return (
     <div>
@@ -978,7 +1005,7 @@ function AdminPanel(props) {
         ))}
       </div>
       {tab === "whs" && <WarehouseAdmin warehouses={warehouses} users={users} assets={assets} saveWarehouses={saveWarehouses} />}
-      {tab === "users" && <UserAdmin users={users} warehouses={warehouses} createUser={createUser} updateUser={updateUser} deleteUser={deleteUser} hasSupabaseConfig={hasSupabaseConfig} />}
+      {tab === "users" && <UserAdmin users={users} warehouses={warehouses} createUser={createUser} updateUser={updateUser} resetUserPassword={resetUserPassword} deleteUser={deleteUser} hasSupabaseConfig={hasSupabaseConfig} />}
       {tab === "cats" && <CategoryAdmin categories={categories} saveCategories={saveCategories} />}
     </div>
   );
@@ -1099,7 +1126,7 @@ function WarehouseAdmin({ warehouses, users, assets, saveWarehouses }) {
   );
 }
 
-function UserAdmin({ users, warehouses, createUser, updateUser, deleteUser, hasSupabaseConfig }) {
+function UserAdmin({ users, warehouses, createUser, updateUser, resetUserPassword, deleteUser, hasSupabaseConfig }) {
   const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseId: "", authUserId: "" });
   const [editId, setEditId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1198,11 +1225,33 @@ function UserAdmin({ users, warehouses, createUser, updateUser, deleteUser, hasS
                 <div style={{ fontWeight: 700 }}>{user.name}</div>
                 <Muted>{user.login} · {user.role}{user.warehouseId ? ` · ${warehouses.find((w) => w.id === user.warehouseId)?.name || ""}` : ""}</Muted>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => { setEditId(user.id); setForm({ name: user.name, login: user.login, password: "", role: user.role, warehouseId: user.warehouseId || "", authUserId: user.authUserId || "" }); }}>
                   Редактировать
                 </button>
-                <button style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })} onClick={() => void deleteUser(user.id)}>
+                <button
+                  style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })}
+                  onClick={async () => {
+                    const pwd = window.prompt(`Новый пароль для ${user.login}:`, "");
+                    if (pwd === null) return;
+                    const trimmed = pwd.trim();
+                    if (trimmed.length < 6) {
+                      alert("Пароль должен содержать минимум 6 символов.");
+                      return;
+                    }
+                    const ok = await resetUserPassword(user.id, trimmed);
+                    if (ok) alert("Пароль обновлён.");
+                  }}
+                >
+                  Сбросить пароль
+                </button>
+                <button
+                  style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })}
+                  onClick={async () => {
+                    if (!window.confirm(`Удалить пользователя ${user.name}? Это действие необратимо.`)) return;
+                    await deleteUser(user.id);
+                  }}
+                >
                   Удалить
                 </button>
               </div>

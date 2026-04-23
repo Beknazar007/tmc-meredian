@@ -154,6 +154,12 @@ async function upsertRows(table, rows) {
   if (error) throw error;
 }
 
+async function deleteRowsById(table, ids) {
+  if (!ids?.length) return;
+  const { error } = await supabase.from(table).delete().in("id", ids);
+  if (error) throw error;
+}
+
 async function replaceTable(table, rows) {
   const nextRows = rows || [];
   const nextIds = nextRows.map((r) => r.id);
@@ -168,52 +174,138 @@ async function replaceTable(table, rows) {
   }
 }
 
+/**
+ * Applies a row-level diff: upserts `upsertRows` and deletes ids in `deleteIds`.
+ * Unlike replaceTable, does NOT delete rows based on "not in next set" — so
+ * concurrent inserts by other users aren't lost.
+ */
+async function applyRowDiff(table, upsertRowsList, deleteIdsList) {
+  if (upsertRowsList?.length) {
+    await upsertRows(table, upsertRowsList);
+  }
+  if (deleteIdsList?.length) {
+    await deleteRowsById(table, deleteIdsList);
+  }
+}
+
+function diffById(prevList, nextList, { compareRow } = {}) {
+  const prev = Array.isArray(prevList) ? prevList : [];
+  const next = Array.isArray(nextList) ? nextList : [];
+  const prevMap = new Map(prev.map((r) => [r.id, r]));
+  const nextIds = new Set(next.map((r) => r.id));
+
+  const toUpsert = [];
+  next.forEach((row) => {
+    const prevRow = prevMap.get(row.id);
+    if (!prevRow) {
+      toUpsert.push(row);
+      return;
+    }
+    if (compareRow) {
+      if (!compareRow(prevRow, row)) toUpsert.push(row);
+    } else {
+      if (JSON.stringify(prevRow) !== JSON.stringify(row)) toUpsert.push(row);
+    }
+  });
+
+  const toDelete = [];
+  prev.forEach((row) => {
+    if (!nextIds.has(row.id)) toDelete.push(row.id);
+  });
+
+  return { toUpsert, toDelete };
+}
+
 async function readTable(table, orderBy = "id") {
   const { data, error } = await supabase.from(table).select("*").order(orderBy, { ascending: true });
   if (error) throw error;
   return data || [];
 }
 
+function fromWarehouseRow(w) {
+  return {
+    id: w.id,
+    name: w.name,
+    responsibleIds: w.responsible_ids || [],
+    responsibleId: w.responsible_id || null,
+    created_at: w.created_at,
+    updated_at: w.updated_at,
+  };
+}
+
+function fromAssetRow(a) {
+  return {
+    ...a,
+    warehouseId: a.warehouse_id,
+    responsibleId: a.responsible_id,
+    purchaseDate: a.purchase_date || a.purchaseDate,
+  };
+}
+
+function fromTransferRow(t) {
+  return {
+    ...t,
+    fromWhId: t.from_wh_id,
+    toWhId: t.to_wh_id,
+    fromResponsibleId: t.from_responsible_id,
+    toResponsibleId: t.to_responsible_id,
+    createdAt: t.created_at,
+    confirmedAt: t.confirmed_at,
+    confirmedBy: t.confirmed_by,
+  };
+}
+
+export async function loadUsersSlice() {
+  assertConfiguredAndClient();
+  const rows = await readTable(TABLES.users);
+  return rows.map(fromUserRow);
+}
+
+export async function loadWarehousesSlice() {
+  assertConfiguredAndClient();
+  const rows = await readTable(TABLES.warehouses);
+  return rows.map(fromWarehouseRow);
+}
+
+export async function loadAssetsSlice() {
+  assertConfiguredAndClient();
+  const rows = await readTable(TABLES.assets);
+  return rows.map(fromAssetRow);
+}
+
+export async function loadTransfersSlice() {
+  assertConfiguredAndClient();
+  const rows = await readTable(TABLES.transfers, "created_at");
+  return rows.map(fromTransferRow);
+}
+
+export async function loadCategoriesSlice() {
+  assertConfiguredAndClient();
+  const rows = await readTable(TABLES.categories);
+  return rows.map((c) => c.name);
+}
+
 export async function loadCloudState() {
   assertConfiguredAndClient();
   const [users, warehouses, assets, transfers, categories] = await Promise.all([
-    readTable(TABLES.users),
-    readTable(TABLES.warehouses),
-    readTable(TABLES.assets),
-    readTable(TABLES.transfers, "created_at"),
-    readTable(TABLES.categories),
+    loadUsersSlice(),
+    loadWarehousesSlice(),
+    loadAssetsSlice(),
+    loadTransfersSlice(),
+    loadCategoriesSlice(),
   ]);
 
   return {
-    users: users.map(fromUserRow),
-    warehouses: warehouses.map((w) => ({
-      id: w.id,
-      name: w.name,
-      responsibleIds: w.responsible_ids || [],
-      responsibleId: w.responsible_id || null,
-      created_at: w.created_at,
-      updated_at: w.updated_at,
-    })),
-    assets: assets.map((a) => ({
-      ...a,
-      warehouseId: a.warehouse_id,
-      responsibleId: a.responsible_id,
-      purchaseDate: a.purchase_date || a.purchaseDate,
-    })),
-    transfers: transfers.map((t) => ({
-      ...t,
-      fromWhId: t.from_wh_id,
-      toWhId: t.to_wh_id,
-      fromResponsibleId: t.from_responsible_id,
-      toResponsibleId: t.to_responsible_id,
-      createdAt: t.created_at,
-      confirmedAt: t.confirmed_at,
-      confirmedBy: t.confirmed_by,
-    })),
-    categories: categories.map((c) => c.name),
+    users,
+    warehouses,
+    assets,
+    transfers,
+    categories,
     session: null,
   };
 }
+
+export const CLOUD_TABLES = TABLES;
 
 export async function migrateLocalToCloud(local) {
   assertConfiguredAndClient();
@@ -253,10 +345,12 @@ export async function migrateLocalToCloud(local) {
   localStorage.setItem(MIGRATION_FLAG, "1");
 }
 
-export async function saveUsers(users) {
+export async function saveUsers(nextList, prevList) {
   assertConfiguredAndClient();
-  const normalized = users.map(toUserRow);
-  await replaceTable(TABLES.users, normalized);
+  const nextRows = (nextList || []).map(toUserRow);
+  const prevRows = (prevList || []).map(toUserRow);
+  const { toUpsert, toDelete } = diffById(prevRows, nextRows);
+  await applyRowDiff(TABLES.users, toUpsert, toDelete);
 }
 
 export async function createUser(user) {
@@ -295,37 +389,74 @@ export async function updateUser(userId, patch) {
 
 export async function deleteUser(userId) {
   assertConfiguredAndClient();
-  const { error } = await supabase.from(TABLES.users).delete().eq("id", userId);
+  const { data, error } = await supabase.functions.invoke("delete-user", {
+    body: { userId },
+  });
   if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data;
 }
 
-export async function saveWarehouses(warehouses) {
+export async function resetUserPassword(userId, password) {
   assertConfiguredAndClient();
-  const normalized = warehouses.map(toWarehouseRow);
-  await replaceTable(TABLES.warehouses, normalized);
+  const { data, error } = await supabase.functions.invoke("reset-password", {
+    body: { userId, password },
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data;
 }
 
-export async function saveAssets(assets) {
+export async function updateUserRole({ userId, role, warehouseId, name }) {
   assertConfiguredAndClient();
-  const normalized = await Promise.all(
-    assets.map(async (a) => {
+  const body = { userId, role };
+  if (warehouseId !== undefined) body.warehouseId = warehouseId;
+  if (name !== undefined) body.name = name;
+  const { data, error } = await supabase.functions.invoke("update-user-role", {
+    body,
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+export async function saveWarehouses(nextList, prevList) {
+  assertConfiguredAndClient();
+  const nextRows = (nextList || []).map(toWarehouseRow);
+  const prevRows = (prevList || []).map(toWarehouseRow);
+  const { toUpsert, toDelete } = diffById(prevRows, nextRows);
+  await applyRowDiff(TABLES.warehouses, toUpsert, toDelete);
+}
+
+export async function saveAssets(nextList, prevList) {
+  assertConfiguredAndClient();
+  const prevRows = (prevList || []).map((a) => toAssetRow(a, a?.photo ?? null));
+  const nextRows = await Promise.all(
+    (nextList || []).map(async (a) => {
       const withPhoto = await uploadPhotoIfNeeded(a);
       return toAssetRow(withPhoto, withPhoto.photo);
     })
   );
-  await replaceTable(TABLES.assets, normalized);
+  const { toUpsert, toDelete } = diffById(prevRows, nextRows);
+  await applyRowDiff(TABLES.assets, toUpsert, toDelete);
 }
 
-export async function saveTransfers(transfers) {
+export async function saveTransfers(nextList, prevList) {
   assertConfiguredAndClient();
-  const normalized = transfers.map(toTransferRow);
-  await replaceTable(TABLES.transfers, normalized);
+  const nextRows = (nextList || []).map(toTransferRow);
+  const prevRows = (prevList || []).map(toTransferRow);
+  const { toUpsert, toDelete } = diffById(prevRows, nextRows);
+  await applyRowDiff(TABLES.transfers, toUpsert, toDelete);
 }
 
-export async function saveCategories(categories) {
+export async function saveCategories(nextList, prevList) {
   assertConfiguredAndClient();
-  const rows = categories.map((name) => ({ id: `cat-${name}`, name }));
-  await replaceTable(TABLES.categories, rows);
+  const nextRows = (nextList || []).map((name) => ({ id: `cat-${name}`, name }));
+  const prevRows = (prevList || []).map((name) => ({ id: `cat-${name}`, name }));
+  const { toUpsert, toDelete } = diffById(prevRows, nextRows, {
+    compareRow: (a, b) => a.name === b.name,
+  });
+  await applyRowDiff(TABLES.categories, toUpsert, toDelete);
 }
 
 export async function saveSession(session) {

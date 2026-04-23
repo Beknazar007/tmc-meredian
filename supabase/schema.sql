@@ -641,6 +641,30 @@ grant execute on function public.tmc_request_writeoff(text, numeric, text, text)
 grant execute on function public.tmc_approve_writeoff(text, numeric, text, text) to authenticated;
 grant execute on function public.tmc_reject_writeoff(text, text) to authenticated;
 
+-- Enable Supabase Realtime for core tables so clients get instant updates.
+do $$
+declare
+  tbl text;
+  tables text[] := array[
+    'tmc_users',
+    'tmc_warehouses',
+    'tmc_assets',
+    'tmc_transfers',
+    'tmc_categories'
+  ];
+begin
+  foreach tbl in array tables loop
+    begin
+      execute format('alter publication supabase_realtime add table public.%I', tbl);
+    exception
+      when duplicate_object then null;
+      when others then
+        raise notice 'Could not add % to supabase_realtime: %', tbl, sqlerrm;
+    end;
+  end loop;
+end;
+$$;
+
 -- Storage setup for asset photos.
 insert into storage.buckets (id, name, public)
 values ('asset-photos', 'asset-photos', true)
