@@ -97,12 +97,13 @@ Storage:
 - Photo upload occurs in `repository.uploadPhotoIfNeeded()`
 
 RPC functions (DB-side business logic):
-- `tmc_request_transfer`
-- `tmc_confirm_transfer`
-- `tmc_reject_transfer`
+- `tmc_request_transfer(p_transfer_id, p_payload)` — inserts `tmc_transfers` row with status `pending`, deducts `qty` from source asset (or flips single-unit asset to `В пути`), appends a history entry, and logs a row in `tmc_asset_movements`.
+- `tmc_confirm_transfer(p_transfer_id, p_actor)` — flips transfer to `confirmed`, records `confirmed_by` / `confirmed_at`. For quantity assets: merges into an existing matching asset at the destination warehouse or creates a new asset. For single-unit assets: updates `warehouse_id`, `responsible_id`, and returns status to `На складе`. Appends history to the destination asset.
+- `tmc_reject_transfer(p_transfer_id, p_actor, p_reason)` — **requires a reason**. Flips transfer to `rejected`, stores the reason in `tmc_transfers.reject_reason`. Returns the qty to the source asset (or flips single-unit asset back to `На складе`). Appends a history entry on the source asset with the reason in `notes`.
 - `tmc_request_writeoff`
 - `tmc_approve_writeoff`
 - `tmc_reject_writeoff`
+- `tmc_iso_now()` — helper returning ISO-8601 UTC timestamp string, used inside the transfer RPCs for consistent timestamps in both DB rows and embedded JSON history.
 
 ---
 
@@ -159,7 +160,7 @@ Top-level pages (driven by `page` state in `App.jsx`):
 - `incoming` - incoming transfers
 - `writeoffs` - pending write-off approvals
 - `admin` - admin panel (warehouses/users/categories)
-- `waybill` - transfer waybill view
+- `waybill` - transfer **Акт приёма-передачи** view (print-ready)
 - `export` - Excel exports
 
 ### Add TMC flow
@@ -169,6 +170,40 @@ Top-level pages (driven by `page` state in `App.jsx`):
   - shows loading state (`Сохранение...`)
   - waits for cloud save result
   - closes modal only when save succeeds.
+
+### Transfer flow + Акт приёма-передачи
+
+The transfer process is the core lifecycle event for an asset. Every transfer has an **Акт приёма-передачи** (transfer-acceptance act) that can be viewed and printed at any stage.
+
+**Lifecycle:**
+1. **Request** — source warehouse responsible (or admin) initiates transfer from `AssetDetail` via "Передать ТМЦ".
+   - RPC: `tmc_request_transfer`.
+   - Effect: transfer row created with `status='pending'`; source asset has its `qty` deducted (or, for single-unit assets, status set to `В пути`).
+2. **Confirm / Reject** — destination warehouse responsible (or admin) acts from `IncomingPage` or `AssetDetail` incoming block.
+   - Confirm → RPC `tmc_confirm_transfer`. Asset is actually moved/merged to the destination warehouse.
+   - Reject → RPC `tmc_reject_transfer`. UI prompts for a reason via `window.prompt`; the reason is **required** and is stored in `tmc_transfers.reject_reason`. Source asset is restored.
+3. **Act** — available at all three stages. Button `Акт` navigates to the `waybill` page (`WaybillPage` in `App.jsx`).
+
+**Act (`WaybillPage`) contents:**
+- Header: `АКТ ПРИЁМА-ПЕРЕДАЧИ` + transfer №.
+- Status badge: `Ожидает подтверждения` / `Подтверждён` / `Отклонён`.
+- Sections:
+  - Предмет передачи — asset name, inv. number, category, quantity.
+  - Передающая сторона — source warehouse, source responsible, initiator + timestamp.
+  - Принимающая сторона — destination warehouse, destination responsible; plus `Подтвердил` or `Отклонил` (with reason) depending on final status.
+  - Примечание (if present).
+- Print button opens a formal A4-style print template with signature blocks (`Сдал` / `Принял`).
+
+**Where the act button appears:**
+- `AssetDetail` → incoming pending transfer card (button `Акт`).
+- `AssetDetail` → "Журнал передач" card (every transfer for the asset, with status chip and `Акт` button — accessible after confirm/reject as well).
+- `IncomingPage` → each pending transfer card (button `Акт`).
+
+**When editing the transfer flow, always update:**
+1. `supabase/schema.sql` — RPC bodies and any new columns on `tmc_transfers`.
+2. `src/lib/repository.js` — `toTransferRow` / `fromTransferRow` mappings and RPC wrappers (`rpcRequestTransfer`, `rpcConfirmTransfer`, `rpcRejectTransfer`).
+3. `src/App.jsx` — request/confirm/reject UI (in `AssetDetail` and `IncomingPage`) and the `WaybillPage` template (both the in-app view and the print popup).
+4. Run the SQL migration live (or redeploy the full `schema.sql`) before shipping frontend changes that rely on new fields/params.
 
 ---
 

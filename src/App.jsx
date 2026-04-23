@@ -702,7 +702,7 @@ function AssetDetail(props) {
               </Muted>
               <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                 <button style={buttonStyle("#8b5cf6")} onClick={() => nav("waybill", { transferId: pendingTransfer.id })}>
-                  Накладная
+                  Акт
                 </button>
                 <button style={buttonStyle(COLORS.accent)} onClick={confirmIncoming}>
                   Подтвердить
@@ -806,6 +806,65 @@ function AssetDetail(props) {
             </Card>
           )}
 
+          {(() => {
+            const assetTransfers = transfers
+              .filter((t) => t.assetId === asset.id)
+              .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            if (assetTransfers.length === 0) return null;
+            const statusMeta = {
+              pending: { label: "Ожидает", color: COLORS.warn },
+              confirmed: { label: "Подтверждён", color: COLORS.success },
+              rejected: { label: "Отклонён", color: COLORS.danger },
+            };
+            return (
+              <Card>
+                <SectionTitle>Журнал передач</SectionTitle>
+                <div style={{ display: "grid", gap: 10 }}>
+                  {assetTransfers.map((t) => {
+                    const meta = statusMeta[t.status] || { label: t.status, color: COLORS.muted };
+                    return (
+                      <div
+                        key={t.id}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: 8,
+                          border: `1px solid ${COLORS.border}`,
+                          background: COLORS.surface,
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 10,
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 600 }}>{t.no}</div>
+                          <Muted>
+                            {t.fromWhName} → {t.toWhName} · {fmt(t.createdAt)}
+                          </Muted>
+                          {t.status === "rejected" && t.rejectReason && (
+                            <div style={{ marginTop: 4, color: COLORS.danger, fontSize: 13 }}>
+                              Причина: {t.rejectReason}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                          <Chip color={meta.color}>{meta.label}</Chip>
+                          <button
+                            style={buttonStyle("#8b5cf6")}
+                            onClick={() => nav("waybill", { transferId: t.id })}
+                          >
+                            Акт
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            );
+          })()}
+
           <Card>
             <SectionTitle>История движения</SectionTitle>
             {(asset.history || []).length === 0 && <Muted>История пуста</Muted>}
@@ -847,7 +906,7 @@ function IncomingPage({ transfers, assets, saveAssets, saveTransfers, isAdmin, m
               <InfoLine label="Примечание" value={transfer.notes || "—"} />
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-              <button style={buttonStyle("#8b5cf6")} onClick={() => nav("waybill", { transferId: transfer.id })}>Накладная</button>
+              <button style={buttonStyle("#8b5cf6")} onClick={() => nav("waybill", { transferId: transfer.id })}>Акт</button>
               <button
                 style={buttonStyle(COLORS.accent)}
                 onClick={() =>
@@ -884,27 +943,100 @@ function IncomingPage({ transfers, assets, saveAssets, saveTransfers, isAdmin, m
 function WaybillPage({ transferId, transfers, assets, nav }) {
   const transfer = transfers.find((item) => item.id === transferId);
   const asset = assets.find((item) => item.id === transfer?.assetId);
-  if (!transfer) return <Empty text="Накладная не найдена" />;
+  if (!transfer) return <Empty text="Акт не найден" />;
+
+  const statusMeta = {
+    pending: { label: "Ожидает подтверждения", color: COLORS.warn, bg: "#3a2c14" },
+    confirmed: { label: "Подтверждён", color: COLORS.success, bg: "#0f2b1f" },
+    rejected: { label: "Отклонён", color: COLORS.danger, bg: "#2b1115" },
+  }[transfer.status] || { label: transfer.status, color: COLORS.muted, bg: COLORS.surface };
+
+  const qtyText = transfer.qty ? qtyStr(transfer.qty, transfer.unit) : "1 шт";
+  const esc = (value) => String(value ?? "—")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 
   const print = () => {
     const popup = window.open("", "_blank");
     if (!popup) return;
+    const statusHtml = {
+      pending: `<span style="color:#b45309;">Ожидает подтверждения</span>`,
+      confirmed: `<span style="color:#047857;">Подтверждён · ${esc(transfer.confirmedBy || "—")} · ${esc(fmt(transfer.confirmedAt))}</span>`,
+      rejected: `<span style="color:#b91c1c;">Отклонён · ${esc(transfer.confirmedBy || "—")} · ${esc(fmt(transfer.confirmedAt))}</span>`,
+    }[transfer.status] || esc(transfer.status);
+
+    const rejectBlock = transfer.status === "rejected" && transfer.rejectReason
+      ? `<tr><td style="padding:6px 0; width:220px;"><b>Причина отклонения:</b></td><td style="padding:6px 0;">${esc(transfer.rejectReason)}</td></tr>`
+      : "";
+
     popup.document.write(`
-      <html><head><title>Накладная ${transfer.no}</title></head>
-      <body style="font-family: Arial, sans-serif; padding: 32px;">
-        <h1>Товарная накладная</h1>
-        <p><b>№:</b> ${transfer.no}</p>
-        <p><b>Дата:</b> ${fmt(transfer.createdAt)}</p>
-        <p><b>Наименование:</b> ${transfer.assetName}</p>
-        <p><b>Инв. номер:</b> ${transfer.assetId}</p>
-        <p><b>Количество:</b> ${transfer.qty ? qtyStr(transfer.qty, transfer.unit) : "1 шт"}</p>
-        <p><b>Категория:</b> ${asset?.category || "—"}</p>
-        <p><b>Откуда:</b> ${transfer.fromWhName}</p>
-        <p><b>Куда:</b> ${transfer.toWhName}</p>
-        <p><b>Сдал:</b> ${transfer.fromResponsibleName || "—"}</p>
-        <p><b>Принял:</b> ${transfer.toResponsibleName || "—"}</p>
-        <p><b>Примечание:</b> ${transfer.notes || "—"}</p>
-        <button onclick="window.print()">Печать</button>
+      <html><head><meta charset="utf-8" /><title>Акт приёма-передачи ${esc(transfer.no)}</title>
+        <style>
+          @media print { .no-print { display: none !important; } }
+          body { font-family: "Times New Roman", serif; padding: 32px; color: #111; max-width: 800px; margin: 0 auto; }
+          h1 { text-align: center; font-size: 22px; margin: 0 0 8px; letter-spacing: 2px; }
+          h2 { font-size: 14px; text-align: center; margin: 0 0 24px; color: #444; font-weight: normal; }
+          table { width: 100%; border-collapse: collapse; }
+          td { vertical-align: top; padding: 4px 0; font-size: 14px; }
+          td.label { width: 220px; color: #333; }
+          .section { margin: 18px 0 8px; font-weight: bold; text-transform: uppercase; font-size: 12px; letter-spacing: 1px; color: #555; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+          .sign-row { display: flex; gap: 48px; margin-top: 36px; }
+          .sign-box { flex: 1; border-top: 1px solid #333; padding-top: 6px; font-size: 12px; color: #333; }
+          .sign-box b { display: block; font-size: 14px; color: #111; margin-bottom: 20px; }
+          .status { text-align: center; font-size: 16px; margin: 12px 0 24px; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <h1>АКТ ПРИЁМА-ПЕРЕДАЧИ</h1>
+        <h2>№ ${esc(transfer.no)} от ${esc(fmtD(transfer.createdAt))}</h2>
+        <div class="status">${statusHtml}</div>
+
+        <div class="section">Предмет передачи</div>
+        <table>
+          <tr><td class="label"><b>Наименование:</b></td><td>${esc(transfer.assetName)}</td></tr>
+          <tr><td class="label"><b>Инвентарный №:</b></td><td>${esc(transfer.assetId)}</td></tr>
+          <tr><td class="label"><b>Категория:</b></td><td>${esc(asset?.category || "—")}</td></tr>
+          <tr><td class="label"><b>Количество:</b></td><td>${esc(qtyText)}</td></tr>
+        </table>
+
+        <div class="section">Передающая сторона</div>
+        <table>
+          <tr><td class="label"><b>Склад:</b></td><td>${esc(transfer.fromWhName)}</td></tr>
+          <tr><td class="label"><b>Ответственный:</b></td><td>${esc(transfer.fromResponsibleName || "—")}</td></tr>
+          <tr><td class="label"><b>Инициатор передачи:</b></td><td>${esc(transfer.createdBy || "—")} · ${esc(fmt(transfer.createdAt))}</td></tr>
+        </table>
+
+        <div class="section">Принимающая сторона</div>
+        <table>
+          <tr><td class="label"><b>Склад:</b></td><td>${esc(transfer.toWhName)}</td></tr>
+          <tr><td class="label"><b>Ответственный:</b></td><td>${esc(transfer.toResponsibleName || "—")}</td></tr>
+          ${transfer.status === "confirmed"
+            ? `<tr><td class="label"><b>Подтверждено:</b></td><td>${esc(transfer.confirmedBy || "—")} · ${esc(fmt(transfer.confirmedAt))}</td></tr>`
+            : ""}
+        </table>
+
+        ${transfer.notes || rejectBlock ? `<div class="section">Дополнительно</div><table>
+          ${transfer.notes ? `<tr><td class="label"><b>Примечание:</b></td><td>${esc(transfer.notes)}</td></tr>` : ""}
+          ${rejectBlock}
+        </table>` : ""}
+
+        <div class="sign-row">
+          <div class="sign-box">
+            <b>Сдал</b>
+            ${esc(transfer.fromResponsibleName || transfer.createdBy || "—")}<br/>
+            <span style="color:#666;">подпись / расшифровка</span>
+          </div>
+          <div class="sign-box">
+            <b>Принял</b>
+            ${esc(transfer.toResponsibleName || transfer.confirmedBy || "—")}<br/>
+            <span style="color:#666;">подпись / расшифровка</span>
+          </div>
+        </div>
+
+        <div class="no-print" style="margin-top:32px; text-align:center;">
+          <button onclick="window.print()" style="padding:10px 24px; font-size:14px; cursor:pointer;">Печать</button>
+        </div>
       </body></html>
     `);
     popup.document.close();
@@ -912,29 +1044,72 @@ function WaybillPage({ transferId, transfers, assets, nav }) {
 
   return (
     <div>
-      <Breadcrumb items={[{ label: "Входящие", onClick: () => nav("incoming") }, { label: transfer.no }]} />
+      <Breadcrumb
+        items={[
+          { label: "Входящие", onClick: () => nav("incoming") },
+          { label: transfer.no },
+        ]}
+      />
       <Row>
         <div>
-          <Tag>НАКЛАДНАЯ</Tag>
+          <Tag>АКТ ПРИЁМА-ПЕРЕДАЧИ</Tag>
           <H1>{transfer.no}</H1>
         </div>
         <button style={buttonStyle(COLORS.accent)} onClick={print}>Печать</button>
       </Row>
+
+      <div
+        style={{
+          display: "inline-block",
+          padding: "6px 12px",
+          borderRadius: 8,
+          background: statusMeta.bg,
+          border: `1px solid ${statusMeta.color}`,
+          color: statusMeta.color,
+          fontWeight: 600,
+          fontSize: 13,
+          margin: "8px 0 16px",
+        }}
+      >
+        {statusMeta.label}
+      </div>
+
       <Card>
-        <SectionTitle>Товар</SectionTitle>
+        <SectionTitle>Предмет передачи</SectionTitle>
         <InfoLine label="Наименование" value={transfer.assetName} />
         <InfoLine label="Инв. номер" value={transfer.assetId} />
-        <InfoLine label="Количество" value={transfer.qty ? qtyStr(transfer.qty, transfer.unit) : "1 шт"} />
         <InfoLine label="Категория" value={asset?.category || "—"} />
+        <InfoLine label="Количество" value={qtyText} />
       </Card>
+
       <Card>
-        <SectionTitle>Движение</SectionTitle>
-        <InfoLine label="Склад-отправитель" value={transfer.fromWhName} />
-        <InfoLine label="Склад-получатель" value={transfer.toWhName} />
-        <InfoLine label="Дата отправки" value={fmt(transfer.createdAt)} />
-        <InfoLine label="Отправил" value={transfer.createdBy || "—"} />
-        <InfoLine label="Примечание" value={transfer.notes || "—"} />
+        <SectionTitle>Передающая сторона</SectionTitle>
+        <InfoLine label="Склад" value={transfer.fromWhName} />
+        <InfoLine label="Ответственный" value={transfer.fromResponsibleName || "—"} />
+        <InfoLine label="Инициатор" value={`${transfer.createdBy || "—"} · ${fmt(transfer.createdAt)}`} />
       </Card>
+
+      <Card>
+        <SectionTitle>Принимающая сторона</SectionTitle>
+        <InfoLine label="Склад" value={transfer.toWhName} />
+        <InfoLine label="Ответственный" value={transfer.toResponsibleName || "—"} />
+        {transfer.status === "confirmed" && (
+          <InfoLine label="Подтвердил" value={`${transfer.confirmedBy || "—"} · ${fmt(transfer.confirmedAt)}`} />
+        )}
+        {transfer.status === "rejected" && (
+          <>
+            <InfoLine label="Отклонил" value={`${transfer.confirmedBy || "—"} · ${fmt(transfer.confirmedAt)}`} />
+            <InfoLine label="Причина отклонения" value={transfer.rejectReason || "—"} />
+          </>
+        )}
+      </Card>
+
+      {transfer.notes && (
+        <Card>
+          <SectionTitle>Примечание</SectionTitle>
+          <div style={{ color: COLORS.text }}>{transfer.notes}</div>
+        </Card>
+      )}
     </div>
   );
 }
