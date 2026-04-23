@@ -1,58 +1,37 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  createUser as createUserCloud,
+  deleteUser as deleteUserCloud,
   loadCloudState,
-  migrateLocalToCloud,
   saveAssets as saveAssetsCloud,
   saveCategories as saveCategoriesCloud,
   saveSession as saveSessionCloud,
   saveTransfers as saveTransfersCloud,
+  updateUser as updateUserCloud,
   saveUsers as saveUsersCloud,
   saveWarehouses as saveWarehousesCloud,
 } from "../lib/repository";
 import { getSupabaseSession, hasSupabaseConfig } from "../lib/supabase";
 
-const storage = {
-  get(key, fallback) {
-    try {
-      const value = localStorage.getItem(key);
-      return value ? JSON.parse(value) : fallback;
-    } catch {
-      return fallback;
-    }
-  },
-  set(key, value) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-      // ignore storage failures
-    }
-  },
-};
-
-async function runCloudWrite(fn, value, options = {}) {
+async function runCloudWrite(fn, options = {}) {
   const { requiresAuth = true } = options;
   try {
-    if (!hasSupabaseConfig) return;
-    if (hasSupabaseConfig && requiresAuth) {
-      const authSession = await getSupabaseSession();
-      if (!authSession?.user) return;
+    if (!hasSupabaseConfig) {
+      throw new Error("Supabase is not configured.");
     }
-    await fn(value);
+    if (requiresAuth) {
+      const authSession = await getSupabaseSession();
+      if (!authSession?.user) {
+        throw new Error("Not authenticated in Supabase.");
+      }
+    }
+    await fn();
+    return true;
   } catch (error) {
     console.error(error);
-    alert("Ошибка синхронизации с облаком. Данные остаются локально, проверьте настройки Supabase.");
+    alert("Ошибка синхронизации с облаком. Операция не сохранена.");
+    return false;
   }
-}
-
-function createStateFromLocal(defaults) {
-  return {
-    users: storage.get("tmc_users", defaults.users),
-    warehouses: storage.get("tmc_whs", defaults.warehouses),
-    assets: storage.get("tmc_assets", []),
-    transfers: storage.get("tmc_transfers", []),
-    categories: storage.get("tmc_categories", defaults.categories),
-    session: storage.get("tmc_session", null),
-  };
 }
 
 export function useAppState(defaults) {
@@ -66,45 +45,38 @@ export function useAppState(defaults) {
 
   useEffect(() => {
     let alive = true;
-    const local = createStateFromLocal(defaults);
 
     (async () => {
-      let cloud = null;
-      try {
-        if (hasSupabaseConfig) {
-          const authSession = await getSupabaseSession();
-          if (authSession?.user) {
-            await migrateLocalToCloud(local);
-          }
-        } else {
-          await migrateLocalToCloud(local);
-        }
-      } catch (error) {
-        console.warn("Local-to-cloud migration skipped:", error?.message || error);
-      }
-
-      try {
-        cloud = await loadCloudState();
-      } catch {
-        // fallback to local below
-      }
-
-      if (!alive) return;
-      if (cloud) {
-        setUsers(cloud.users?.length ? cloud.users : local.users);
-        setWarehouses(cloud.warehouses?.length ? cloud.warehouses : local.warehouses);
-        setAssets(cloud.assets?.length ? cloud.assets : local.assets);
-        setTransfers(cloud.transfers?.length ? cloud.transfers : local.transfers);
-        setCategories(cloud.categories?.length ? cloud.categories : local.categories);
-        setSession(cloud.session || local.session);
-      } else {
+      if (!hasSupabaseConfig) {
         if (!alive) return;
-        setUsers(local.users);
-        setWarehouses(local.warehouses);
-        setAssets(local.assets);
-        setTransfers(local.transfers);
-        setCategories(local.categories);
-        setSession(local.session);
+        setUsers([]);
+        setWarehouses([]);
+        setAssets([]);
+        setTransfers([]);
+        setCategories(defaults.categories || []);
+        setSession(null);
+        setReady(true);
+        return;
+      }
+
+      try {
+        const cloud = await loadCloudState();
+        if (!alive) return;
+        setUsers(cloud.users || []);
+        setWarehouses(cloud.warehouses || []);
+        setAssets(cloud.assets || []);
+        setTransfers(cloud.transfers || []);
+        setCategories(cloud.categories?.length ? cloud.categories : defaults.categories || []);
+        setSession(cloud.session || null);
+      } catch (error) {
+        console.warn("Cloud state load failed:", error?.message || error);
+        if (!alive) return;
+        setUsers([]);
+        setWarehouses([]);
+        setAssets([]);
+        setTransfers([]);
+        setCategories(defaults.categories || []);
+        setSession(null);
       }
 
       if (alive) setReady(true);
@@ -115,40 +87,61 @@ export function useAppState(defaults) {
     };
   }, [defaults]);
 
-  const saveUsers = (value) => {
-    setUsers(value);
-    storage.set("tmc_users", value);
-    runCloudWrite(saveUsersCloud, value);
+  const saveUsers = async (value) => {
+    const ok = await runCloudWrite(() => saveUsersCloud(value));
+    if (ok) setUsers(value);
   };
 
-  const saveWarehouses = (value) => {
-    setWarehouses(value);
-    storage.set("tmc_whs", value);
-    runCloudWrite(saveWarehousesCloud, value);
+  const createUser = async (user) => {
+    const ok = await runCloudWrite(() => createUserCloud(user));
+    if (ok) {
+      setUsers((prev) => [...prev, user]);
+      return true;
+    }
+    return false;
   };
 
-  const saveAssets = (value) => {
-    setAssets(value);
-    storage.set("tmc_assets", value);
-    runCloudWrite(saveAssetsCloud, value);
+  const updateUser = async (userId, patch) => {
+    const ok = await runCloudWrite(() => updateUserCloud(userId, patch));
+    if (ok) {
+      setUsers((prev) => prev.map((item) => (item.id === userId ? { ...item, ...patch } : item)));
+      return true;
+    }
+    return false;
   };
 
-  const saveTransfers = (value) => {
-    setTransfers(value);
-    storage.set("tmc_transfers", value);
-    runCloudWrite(saveTransfersCloud, value);
+  const deleteUser = async (userId) => {
+    const ok = await runCloudWrite(() => deleteUserCloud(userId));
+    if (ok) {
+      setUsers((prev) => prev.filter((item) => item.id !== userId));
+      return true;
+    }
+    return false;
   };
 
-  const saveCategories = (value) => {
-    setCategories(value);
-    storage.set("tmc_categories", value);
-    runCloudWrite(saveCategoriesCloud, value);
+  const saveWarehouses = async (value) => {
+    const ok = await runCloudWrite(() => saveWarehousesCloud(value));
+    if (ok) setWarehouses(value);
   };
 
-  const saveSession = (value) => {
+  const saveAssets = async (value) => {
+    const ok = await runCloudWrite(() => saveAssetsCloud(value));
+    if (ok) setAssets(value);
+  };
+
+  const saveTransfers = async (value) => {
+    const ok = await runCloudWrite(() => saveTransfersCloud(value));
+    if (ok) setTransfers(value);
+  };
+
+  const saveCategories = async (value) => {
+    const ok = await runCloudWrite(() => saveCategoriesCloud(value));
+    if (ok) setCategories(value);
+  };
+
+  const saveSession = async (value) => {
     setSession(value);
-    storage.set("tmc_session", value);
-    runCloudWrite(saveSessionCloud, value, { requiresAuth: false });
+    await runCloudWrite(() => saveSessionCloud(value), { requiresAuth: false });
   };
 
   const hydrateFromCloud = (cloud) => {
@@ -165,13 +158,6 @@ export function useAppState(defaults) {
     setTransfers(nextTransfers);
     setCategories(nextCategories);
     setSession(nextSession);
-
-    storage.set("tmc_users", nextUsers);
-    storage.set("tmc_whs", nextWarehouses);
-    storage.set("tmc_assets", nextAssets);
-    storage.set("tmc_transfers", nextTransfers);
-    storage.set("tmc_categories", nextCategories);
-    storage.set("tmc_session", nextSession);
   };
 
   return useMemo(
@@ -184,6 +170,9 @@ export function useAppState(defaults) {
       categories,
       session,
       saveUsers,
+      createUser,
+      updateUser,
+      deleteUser,
       saveWarehouses,
       saveAssets,
       saveTransfers,

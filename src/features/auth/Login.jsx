@@ -8,8 +8,12 @@ export function Login({ onLogin, hasSupabaseConfig, Field, inputStyle, buttonSty
 
   const submit = async () => {
     setError("");
-    if (!login.trim() || (hasSupabaseConfig && !password)) {
-      setError(hasSupabaseConfig ? "Введите логин (или email) и пароль" : "Введите login");
+    if (!hasSupabaseConfig) {
+      setError("Supabase не настроен. Вход в cloud-only режиме невозможен.");
+      return;
+    }
+    if (!login.trim() || !password) {
+      setError("Введите логин (или email) и пароль");
       return;
     }
     try {
@@ -34,13 +38,13 @@ export function Login({ onLogin, hasSupabaseConfig, Field, inputStyle, buttonSty
         <Field label="Пароль">
           <input type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
         </Field>
-        <button onClick={submit} style={{ ...buttonStyle(COLORS.accent), width: "100%", marginTop: 8 }} disabled={loading}>
+        <button onClick={submit} style={{ ...buttonStyle(COLORS.accent), width: "100%", marginTop: 8 }} disabled={loading || !hasSupabaseConfig}>
           {loading ? "Вход..." : "Войти"}
         </button>
         <div style={{ marginTop: 16, fontSize: 12, color: COLORS.muted, lineHeight: 1.6 }}>
           {hasSupabaseConfig
             ? "Можно входить логином (admin/sklad1/sklad2). Приложение авторизует через Supabase email вида <login>@tmc.local."
-            : "Supabase не настроен: вход выполняется локально по login."}
+            : "Supabase не настроен: cloud-only вход отключен. Добавьте env переменные в Render."}
         </div>
       </div>
     </div>

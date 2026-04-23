@@ -261,6 +261,27 @@ export async function saveUsers(users) {
   await replaceTable(TABLES.users, normalized);
 }
 
+export async function createUser(user) {
+  assertConfiguredAndClient();
+  const row = toUserRow(user);
+  const { error } = await supabase.from(TABLES.users).insert(row);
+  if (error) throw error;
+}
+
+export async function updateUser(userId, patch) {
+  assertConfiguredAndClient();
+  const row = toUserRow({ id: userId, ...patch });
+  const { id: _id, ...updateRow } = row;
+  const { error } = await supabase.from(TABLES.users).update(updateRow).eq("id", userId);
+  if (error) throw error;
+}
+
+export async function deleteUser(userId) {
+  assertConfiguredAndClient();
+  const { error } = await supabase.from(TABLES.users).delete().eq("id", userId);
+  if (error) throw error;
+}
+
 export async function saveWarehouses(warehouses) {
   assertConfiguredAndClient();
   const normalized = warehouses.map(toWarehouseRow);

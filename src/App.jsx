@@ -35,15 +35,6 @@ const STATUS_META = {
   "На списание": { color: "#f97316", icon: "●" },
   "Списан": { color: "#ef4444", icon: "●" },
 };
-const DEFAULT_USERS = [
-  { id: "u1", name: "Администратор", login: "admin", role: "admin", warehouseId: "", authUserId: null },
-  { id: "u2", name: "Иванов А.А.", login: "sklad1", role: "user", warehouseId: "w1", authUserId: null },
-  { id: "u3", name: "Петров Б.Б.", login: "sklad2", role: "user", warehouseId: "w2", authUserId: null },
-];
-const DEFAULT_WAREHOUSES = [
-  { id: "w1", name: "Главный склад", responsibleIds: ["u2"] },
-  { id: "w2", name: "Склад №2", responsibleIds: ["u3"] },
-];
 
 const COLORS = {
   bg: "#0c1117",
@@ -88,6 +79,9 @@ export default function App() {
     categories,
     session,
     saveUsers,
+    createUser,
+    updateUser,
+    deleteUser,
     saveWarehouses,
     saveAssets,
     saveTransfers,
@@ -97,8 +91,8 @@ export default function App() {
   } = useAppState(
     useMemo(
       () => ({
-        users: DEFAULT_USERS,
-        warehouses: DEFAULT_WAREHOUSES,
+        users: [],
+        warehouses: [],
         categories: DEFAULT_CATEGORIES,
       }),
       []
@@ -106,24 +100,21 @@ export default function App() {
   );
 
   const login = async ({ login: loginValue, password }) => {
-    const normalizedLogin = loginValue.trim().toLowerCase();
-    let matchedUser = null;
-
-    if (hasSupabaseConfig) {
-      const authEmail = normalizedLogin.includes("@") ? normalizedLogin : `${normalizedLogin}@tmc.local`;
-      const authResult = await signInWithPassword(authEmail, password);
-      const authId = authResult.user?.id;
-      matchedUser = users.find((user) => user.authUserId === authId || user.login.toLowerCase() === normalizedLogin);
-    } else {
-      matchedUser = users.find((user) => user.login.toLowerCase() === normalizedLogin);
+    if (!hasSupabaseConfig) {
+      throw new Error("Supabase не настроен. Вход возможен только через cloud-конфигурацию.");
     }
+    const normalizedLogin = loginValue.trim().toLowerCase();
+    const authEmail = normalizedLogin.includes("@") ? normalizedLogin : `${normalizedLogin}@tmc.local`;
+    const authResult = await signInWithPassword(authEmail, password);
+    const authId = authResult.user?.id;
+    const matchedUser = users.find((user) => user.authUserId === authId || user.login.toLowerCase() === normalizedLogin);
 
     if (!matchedUser) {
       throw new Error("Пользователь авторизован, но его профиль не найден в tmc_users.");
     }
 
     const next = { user: matchedUser };
-    saveSession(next);
+    void saveSession(next);
     setPage("warehouses");
   };
 
@@ -133,7 +124,7 @@ export default function App() {
         await signOutSupabase();
       }
     } finally {
-      saveSession(null);
+      void saveSession(null);
     }
   };
 
@@ -145,7 +136,7 @@ export default function App() {
       if (!authSession?.user || !session?.user) return;
       const refreshedUser =
         cloud.users?.find((user) => user.authUserId === authSession.user.id || user.id === session.user.id) || session.user;
-      saveSession({ user: refreshedUser });
+      void saveSession({ user: refreshedUser });
     } catch (error) {
       console.error(error);
       alert("Ошибка серверной операции. Проверьте подключение и права доступа.");
@@ -165,7 +156,7 @@ export default function App() {
       const authSession = await getSupabaseSession();
       if (!alive) return;
       if (!authSession?.user) {
-        saveSession(null);
+        void saveSession(null);
       }
     })();
     return () => {
@@ -187,7 +178,7 @@ export default function App() {
         if (!alive || !authSession?.user) return;
         const refreshedUser =
           cloud.users?.find((user) => user.authUserId === authSession.user.id || user.id === session.user.id) || session.user;
-        saveSession({ user: refreshedUser });
+        void saveSession({ user: refreshedUser });
       } catch (error) {
         console.warn("Background cloud refresh failed:", error?.message || error);
       }
@@ -244,6 +235,9 @@ export default function App() {
     isAdmin,
     myWHid,
     saveUsers,
+    createUser,
+    updateUser,
+    deleteUser,
     saveWarehouses,
     saveAssets,
     saveTransfers,
@@ -919,7 +913,7 @@ function AdminPanel(props) {
         ))}
       </div>
       {tab === "whs" && <WarehouseAdmin warehouses={warehouses} users={users} assets={assets} saveWarehouses={saveWarehouses} />}
-      {tab === "users" && <UserAdmin users={users} warehouses={warehouses} saveUsers={saveUsers} hasSupabaseConfig={hasSupabaseConfig} />}
+      {tab === "users" && <UserAdmin users={users} warehouses={warehouses} createUser={createUser} updateUser={updateUser} deleteUser={deleteUser} hasSupabaseConfig={hasSupabaseConfig} />}
       {tab === "cats" && <CategoryAdmin categories={categories} saveCategories={saveCategories} />}
     </div>
   );
@@ -1040,15 +1034,16 @@ function WarehouseAdmin({ warehouses, users, assets, saveWarehouses }) {
   );
 }
 
-function UserAdmin({ users, warehouses, saveUsers, hasSupabaseConfig }) {
+function UserAdmin({ users, warehouses, createUser, updateUser, deleteUser, hasSupabaseConfig }) {
   const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseId: "", authUserId: "" });
   const [editId, setEditId] = useState("");
+  const [saving, setSaving] = useState(false);
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const reset = () => {
     setForm({ name: "", login: "", password: "", role: "user", warehouseId: "", authUserId: "" });
     setEditId("");
   };
-  const submit = () => {
+  const submit = async () => {
     if (!form.name.trim() || !form.login.trim()) return;
     const password = form.password.trim();
     if (!editId && !password) {
@@ -1069,12 +1064,19 @@ function UserAdmin({ users, warehouses, saveUsers, hasSupabaseConfig }) {
     if (!editId || password) {
       payload.password = password;
     }
-    if (editId) {
-      saveUsers(users.map((item) => (item.id === editId ? { ...item, ...payload } : item)));
-    } else {
-      saveUsers([...users, { id: `u${uid()}`, ...payload }]);
+    setSaving(true);
+    try {
+      if (editId) {
+        const ok = await updateUser(editId, payload);
+        if (!ok) return;
+      } else {
+        const ok = await createUser({ id: `u${uid()}`, ...payload });
+        if (!ok) return;
+      }
+      reset();
+    } finally {
+      setSaving(false);
     }
-    reset();
   };
   return (
     <Card>
@@ -1119,7 +1121,7 @@ function UserAdmin({ users, warehouses, saveUsers, hasSupabaseConfig }) {
           </Field>
         )}
         <div style={{ display: "flex", gap: 8 }}>
-          <button style={buttonStyle(COLORS.accent)} onClick={submit}>Сохранить</button>
+          <button style={buttonStyle(COLORS.accent)} onClick={submit} disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</button>
           {(editId || form.name || form.login) && <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={reset}>Сбросить</button>}
         </div>
       </div>
@@ -1135,7 +1137,7 @@ function UserAdmin({ users, warehouses, saveUsers, hasSupabaseConfig }) {
                 <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => { setEditId(user.id); setForm({ name: user.name, login: user.login, password: "", role: user.role, warehouseId: user.warehouseId || "", authUserId: user.authUserId || "" }); }}>
                   Редактировать
                 </button>
-                <button style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })} onClick={() => saveUsers(users.filter((item) => item.id !== user.id))}>
+                <button style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })} onClick={() => void deleteUser(user.id)}>
                   Удалить
                 </button>
               </div>
