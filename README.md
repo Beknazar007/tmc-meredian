@@ -10,6 +10,9 @@
 6. Copy `.env.example` to `.env` and fill:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
+7. Deploy Edge Function for admin user creation:
+   - `supabase functions deploy create-user`
+   - (if needed) `supabase secrets set SUPABASE_ANON_KEY=... SUPABASE_SERVICE_ROLE_KEY=...`
 
 On first app startup, local browser data is migrated to Supabase once, then cloud is the source of truth.
 
@@ -19,6 +22,7 @@ On first app startup, local browser data is migrated to Supabase once, then clou
 2. (Optional for demo users) run `supabase/seed_default_users.sql`.
 3. In Supabase Storage create a **public** bucket: `asset-photos`.
 4. Verify Auth users exist and `public.tmc_users.auth_user_id` is linked to `auth.users.id`.
+5. Deploy function `create-user` from `supabase/functions/create-user/index.ts`.
 
 ## Run
 

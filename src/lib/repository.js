@@ -37,6 +37,20 @@ function toUserRow(user) {
   };
 }
 
+function fromUserRow(u) {
+  return {
+    id: u.id,
+    name: u.name,
+    login: u.login,
+    role: u.role,
+    password: u.password ?? null,
+    warehouseId: u.warehouse_id,
+    authUserId: u.auth_user_id || null,
+    created_at: u.created_at,
+    updated_at: u.updated_at,
+  };
+}
+
 function toWarehouseRow(warehouse) {
   return {
     id: warehouse.id,
@@ -177,17 +191,7 @@ export async function loadCloudState() {
     .find((s) => s.is_active && s.payload && typeof s.payload === "object");
 
   return {
-    users: users.map((u) => ({
-      id: u.id,
-      name: u.name,
-      login: u.login,
-      role: u.role,
-      password: u.password ?? null,
-      warehouseId: u.warehouse_id,
-      authUserId: u.auth_user_id || null,
-      created_at: u.created_at,
-      updated_at: u.updated_at,
-    })),
+    users: users.map(fromUserRow),
     warehouses: warehouses.map((w) => ({
       id: w.id,
       name: w.name,
@@ -263,9 +267,28 @@ export async function saveUsers(users) {
 
 export async function createUser(user) {
   assertConfiguredAndClient();
-  const row = toUserRow(user);
-  const { error } = await supabase.from(TABLES.users).insert(row);
+  const login = String(user.login || "").trim().toLowerCase();
+  const password = String(user.password || "").trim();
+  if (!login || !password) {
+    throw new Error("Для создания пользователя нужны login и пароль.");
+  }
+
+  const { data, error } = await supabase.functions.invoke("create-user", {
+    body: {
+      id: user.id,
+      name: user.name,
+      login,
+      password,
+      role: user.role || "user",
+      warehouseId: user.warehouseId || null,
+      authUserId: user.authUserId || null,
+    },
+  });
   if (error) throw error;
+  if (!data?.user) {
+    throw new Error(data?.error || "Не удалось создать пользователя через Edge Function.");
+  }
+  return data.user;
 }
 
 export async function updateUser(userId, patch) {

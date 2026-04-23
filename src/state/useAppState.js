@@ -93,12 +93,18 @@ export function useAppState(defaults) {
   };
 
   const createUser = async (user) => {
-    const ok = await runCloudWrite(() => createUserCloud(user));
-    if (ok) {
-      setUsers((prev) => [...prev, user]);
+    try {
+      if (!hasSupabaseConfig) throw new Error("Supabase is not configured.");
+      const authSession = await getSupabaseSession();
+      if (!authSession?.user) throw new Error("Not authenticated in Supabase.");
+      const createdUser = await createUserCloud(user);
+      setUsers((prev) => [...prev, createdUser]);
       return true;
+    } catch (error) {
+      console.error(error);
+      alert("Ошибка синхронизации с облаком. Операция не сохранена.");
+      return false;
     }
-    return false;
   };
 
   const updateUser = async (userId, patch) => {
