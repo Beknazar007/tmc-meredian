@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
+  loadCloudState,
   rpcApproveWriteoff,
   rpcConfirmTransfer,
   rpcRejectTransfer,
@@ -171,6 +172,44 @@ export default function App() {
       alive = false;
     };
   }, [ready, session, saveSession]);
+
+  useEffect(() => {
+    if (!ready || !hasSupabaseConfig || !session?.user) return;
+    let alive = true;
+
+    const refreshFromCloud = async () => {
+      try {
+        const cloud = await loadCloudState();
+        if (!alive || !cloud) return;
+        hydrateFromCloud(cloud);
+
+        const authSession = await getSupabaseSession();
+        if (!alive || !authSession?.user) return;
+        const refreshedUser =
+          cloud.users?.find((user) => user.authUserId === authSession.user.id || user.id === session.user.id) || session.user;
+        saveSession({ user: refreshedUser });
+      } catch (error) {
+        console.warn("Background cloud refresh failed:", error?.message || error);
+      }
+    };
+
+    refreshFromCloud();
+    const timer = setInterval(refreshFromCloud, 15000);
+    const onFocus = () => refreshFromCloud();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshFromCloud();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [ready, session?.user?.id, hydrateFromCloud, saveSession]);
 
   if (!ready) return <Splash />;
   if (!session) {
@@ -880,7 +919,7 @@ function AdminPanel(props) {
         ))}
       </div>
       {tab === "whs" && <WarehouseAdmin warehouses={warehouses} users={users} assets={assets} saveWarehouses={saveWarehouses} />}
-      {tab === "users" && <UserAdmin users={users} warehouses={warehouses} saveUsers={saveUsers} />}
+      {tab === "users" && <UserAdmin users={users} warehouses={warehouses} saveUsers={saveUsers} hasSupabaseConfig={hasSupabaseConfig} />}
       {tab === "cats" && <CategoryAdmin categories={categories} saveCategories={saveCategories} />}
     </div>
   );
@@ -1001,7 +1040,7 @@ function WarehouseAdmin({ warehouses, users, assets, saveWarehouses }) {
   );
 }
 
-function UserAdmin({ users, warehouses, saveUsers }) {
+function UserAdmin({ users, warehouses, saveUsers, hasSupabaseConfig }) {
   const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseId: "", authUserId: "" });
   const [editId, setEditId] = useState("");
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1041,6 +1080,22 @@ function UserAdmin({ users, warehouses, saveUsers }) {
     <Card>
       <SectionTitle>Пользователи</SectionTitle>
       <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
+        {hasSupabaseConfig && (
+          <div
+            style={{
+              background: "#2a1f0f",
+              border: `1px solid ${COLORS.warn}`,
+              borderRadius: 10,
+              color: "#fcd34d",
+              padding: "10px 12px",
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            Создание пользователя здесь добавляет профиль только в таблицу `tmc_users`. Для входа также нужен пользователь в Supabase Auth
+            (email/password) и, при необходимости, связь через `auth_user_id`.
+          </div>
+        )}
         <Field label="ФИО"><input style={inputStyle} value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field>
         <Field label="Email (Supabase Auth)"><input style={inputStyle} value={form.login} onChange={(e) => setForm((p) => ({ ...p, login: e.target.value }))} /></Field>
         <Field label={editId ? "Пароль (оставьте пустым, чтобы не менять)" : "Пароль *"}>
