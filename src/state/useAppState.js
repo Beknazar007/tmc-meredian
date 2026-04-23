@@ -132,14 +132,14 @@ export function useAppState(defaults) {
     };
   }, [defaults]);
 
-  const saveUsers = async (value) => {
+  const saveUsers = useCallback(async (value) => {
     const prev = usersRef.current;
     const ok = await runCloudWrite(() => saveUsersCloud(value, prev));
     if (ok) setUsers(value);
     return ok;
-  };
+  }, []);
 
-  const createUser = async (user) => {
+  const createUser = useCallback(async (user) => {
     try {
       if (!hasSupabaseConfig) throw new Error("Supabase is not configured.");
       const authSession = await getSupabaseSession();
@@ -152,9 +152,9 @@ export function useAppState(defaults) {
       alert("Ошибка синхронизации с облаком. Операция не сохранена.");
       return false;
     }
-  };
+  }, []);
 
-  const updateUser = async (userId, patch) => {
+  const updateUser = useCallback(async (userId, patch) => {
     try {
       if (!hasSupabaseConfig) throw new Error("Supabase is not configured.");
       const authSession = await getSupabaseSession();
@@ -192,9 +192,9 @@ export function useAppState(defaults) {
       alert("Ошибка синхронизации с облаком. Операция не сохранена.");
       return false;
     }
-  };
+  }, []);
 
-  const resetUserPassword = async (userId, password) => {
+  const resetUserPassword = useCallback(async (userId, password) => {
     try {
       if (!hasSupabaseConfig) throw new Error("Supabase is not configured.");
       const authSession = await getSupabaseSession();
@@ -207,50 +207,49 @@ export function useAppState(defaults) {
       alert("Не удалось сбросить пароль.");
       return false;
     }
-  };
+  }, []);
 
-  const deleteUser = async (userId) => {
+  const deleteUser = useCallback(async (userId) => {
     const ok = await runCloudWrite(() => deleteUserCloud(userId));
     if (ok) {
       setUsers((prev) => prev.filter((item) => item.id !== userId));
       return true;
     }
     return false;
-  };
+  }, []);
 
-  const saveWarehouses = async (value) => {
+  const saveWarehouses = useCallback(async (value) => {
     const prev = warehousesRef.current;
     const ok = await runCloudWrite(() => saveWarehousesCloud(value, prev));
     if (ok) setWarehouses(value);
     return ok;
-  };
+  }, []);
 
-  const saveAssets = async (value) => {
+  const saveAssets = useCallback(async (value) => {
     const prev = assetsRef.current;
     const ok = await runCloudWrite(() => saveAssetsCloud(value, prev));
     if (ok) setAssets(value);
     return ok;
-  };
+  }, []);
 
-  const saveTransfers = async (value) => {
+  const saveTransfers = useCallback(async (value) => {
     const prev = transfersRef.current;
     const ok = await runCloudWrite(() => saveTransfersCloud(value, prev));
     if (ok) setTransfers(value);
     return ok;
-  };
+  }, []);
 
-  const saveCategories = async (value) => {
+  const saveCategories = useCallback(async (value) => {
     const prev = categoriesRef.current;
     const ok = await runCloudWrite(() => saveCategoriesCloud(value, prev));
     if (ok) setCategories(value);
     return ok;
-  };
+  }, []);
 
-  const saveSession = async (value) => {
+  const saveSession = useCallback(async (value) => {
     setSession(value);
-    void value;
     return true;
-  };
+  }, []);
 
   const hydrateFromCloud = useCallback((cloud) => {
     const nextUsers = cloud.users || [];
