@@ -1261,7 +1261,18 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
   };
 
   return (
-    <div style={{ width: "100%", maxWidth: 520, background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 20 }}>
+    <div
+      style={{
+        width: "100%",
+        maxWidth: 520,
+        maxHeight: "calc(100vh - 32px)",
+        overflowY: "auto",
+        background: COLORS.surface,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 16,
+        padding: 20,
+      }}
+    >
       <H1>Новый ТМЦ</H1>
       <div onClick={() => fileRef.current?.click()} style={{ height: 180, borderRadius: 12, border: `2px dashed ${COLORS.border}`, background: COLORS.bg, marginBottom: 14, display: "grid", placeItems: "center", cursor: "pointer", overflow: "hidden" }}>
         {form.photo ? <img src={form.photo} alt="preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Muted>Нажмите, чтобы добавить фото</Muted>}
@@ -1301,7 +1312,18 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
         </Field>
         <Field label="Серийный / инвентарный №"><input style={inputStyle} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} /></Field>
       </div>
-      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          marginTop: 16,
+          position: "sticky",
+          bottom: 0,
+          background: COLORS.surface,
+          paddingTop: 8,
+          borderTop: `1px solid ${COLORS.border}`,
+        }}
+      >
         <button style={{ ...buttonStyle(COLORS.accent), flex: 1 }} onClick={submit} disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</button>
         <button style={{ ...buttonStyle("transparent", { border: `1px solid ${COLORS.border}` }), flex: 1 }} onClick={onCancel} disabled={saving}>Отмена</button>
       </div>
