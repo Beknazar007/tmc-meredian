@@ -28,6 +28,22 @@ const dlog = (...args) => {
   console.log("[AUTH]", new Date().toISOString().slice(11, 23), ...args);
 };
 
+function extractErrorMessage(error) {
+  if (!error) return "";
+  const raw =
+    error?.message ||
+    error?.error_description ||
+    error?.details ||
+    error?.hint ||
+    (typeof error === "string" ? error : "");
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  // Server-side guards raise messages that start with "Нельзя..." or are
+  // already human-readable; pass those through. Strip Postgres prefixes
+  // like "ERROR:  ..." that Supabase sometimes leaves in.
+  return text.replace(/^ERROR:\s*/i, "");
+}
+
 async function runCloudWrite(fn, options = {}) {
   const { requiresAuth = true } = options;
   try {
@@ -44,7 +60,12 @@ async function runCloudWrite(fn, options = {}) {
     return true;
   } catch (error) {
     console.error(error);
-    alert("Ошибка синхронизации с облаком. Операция не сохранена.");
+    const detail = extractErrorMessage(error);
+    if (detail) {
+      alert(`Операция не сохранена: ${detail}`);
+    } else {
+      alert("Ошибка синхронизации с облаком. Операция не сохранена.");
+    }
     return false;
   }
 }

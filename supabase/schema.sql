@@ -106,9 +106,21 @@ create or replace function public.tmc_prevent_last_category_delete()
 returns trigger
 language plpgsql
 as $$
+declare
+  asset_count int;
 begin
+  -- Block deletion if any asset still references this category by name
+  -- (tmc_assets.category stores the category name, not its id).
+  select count(*) into asset_count
+  from public.tmc_assets
+  where category = old.name;
+  if asset_count > 0 then
+    raise exception 'Нельзя удалить категорию «%»: в ней числится % ТМЦ. Переназначьте их перед удалением.',
+      old.name, asset_count;
+  end if;
+
   if (select count(*) from public.tmc_categories) <= 1 then
-    raise exception 'Cannot delete the last category';
+    raise exception 'Нельзя удалить последнюю категорию';
   end if;
   return old;
 end;
@@ -265,13 +277,29 @@ create trigger trg_sync_warehouse_responsibles
 after insert or update of responsible_ids on public.tmc_warehouses
 for each row execute function public.sync_warehouse_responsibles();
 
--- Before a user is deleted, strip their id from every warehouse's
--- responsible_ids jsonb array so no stale reference can break later saves.
+-- Before a user is deleted: (1) block deletion if they're still
+-- responsible for a pending transfer (incoming or outgoing), otherwise
+-- the transfer would become unworkable; (2) strip their id from every
+-- warehouse's responsible_ids jsonb array so no stale reference can
+-- break later saves.
 create or replace function public.prune_user_from_warehouses()
 returns trigger
 language plpgsql
 as $$
+declare
+  pending_count int;
+  display_name text;
 begin
+  display_name := coalesce(old.name, old.id);
+  select count(*) into pending_count
+  from public.tmc_transfers
+  where status = 'pending'
+    and (from_responsible_id = old.id or to_responsible_id = old.id);
+  if pending_count > 0 then
+    raise exception 'Нельзя удалить пользователя «%»: на нём % активных передач. Сначала отклоните или переназначьте их.',
+      display_name, pending_count;
+  end if;
+
   update public.tmc_warehouses
   set responsible_ids = coalesce(
     (
@@ -291,6 +319,70 @@ drop trigger if exists trg_prune_user_from_warehouses on public.tmc_users;
 create trigger trg_prune_user_from_warehouses
 before delete on public.tmc_users
 for each row execute function public.prune_user_from_warehouses();
+
+-- Block warehouse deletion while it still holds inventory or has active
+-- transfers. Without this guard, cascading FK set-null would leave
+-- orphaned assets invisible in the UI and broken pending transfers.
+create or replace function public.tmc_guard_warehouse_delete()
+returns trigger
+language plpgsql
+as $$
+declare
+  asset_count int;
+  transfer_count int;
+  display_name text;
+begin
+  display_name := coalesce(old.name, old.id);
+  select count(*) into asset_count
+  from public.tmc_assets
+  where warehouse_id = old.id;
+  if asset_count > 0 then
+    raise exception 'Нельзя удалить склад «%»: на нём числится % ТМЦ. Переместите или спишите их перед удалением.',
+      display_name, asset_count;
+  end if;
+  select count(*) into transfer_count
+  from public.tmc_transfers
+  where status = 'pending'
+    and (from_wh_id = old.id or to_wh_id = old.id);
+  if transfer_count > 0 then
+    raise exception 'Нельзя удалить склад «%»: есть % активных передач (ожидают подтверждения).',
+      display_name, transfer_count;
+  end if;
+  return old;
+end;
+$$;
+
+drop trigger if exists trg_tmc_guard_warehouse_delete on public.tmc_warehouses;
+create trigger trg_tmc_guard_warehouse_delete
+before delete on public.tmc_warehouses
+for each row execute function public.tmc_guard_warehouse_delete();
+
+-- Block asset deletion while any pending transfer references it.
+-- tmc_confirm_transfer deletes "zombie" source rows only when safe
+-- (no other pending transfer for that asset), so this guard does not
+-- block the normal transfer lifecycle.
+create or replace function public.tmc_guard_asset_delete()
+returns trigger
+language plpgsql
+as $$
+declare
+  pending_count int;
+begin
+  select count(*) into pending_count
+  from public.tmc_transfers
+  where asset_id = old.id and status = 'pending';
+  if pending_count > 0 then
+    raise exception 'Нельзя удалить ТМЦ «%»: есть % активных передач по этой позиции.',
+      coalesce(old.name, old.id), pending_count;
+  end if;
+  return old;
+end;
+$$;
+
+drop trigger if exists trg_tmc_guard_asset_delete on public.tmc_assets;
+create trigger trg_tmc_guard_asset_delete
+before delete on public.tmc_assets
+for each row execute function public.tmc_guard_asset_delete();
 
 insert into public.tmc_warehouse_responsibles (warehouse_id, user_id)
 select w.id, v.value::text
@@ -585,9 +677,18 @@ begin
 
       target_asset_id := existing.id;
 
-      -- If the source was fully transferred, remove its empty zombie row
-      -- so the asset only exists at the destination.
-      if coalesce(src.qty, 0) = 0 then
+      -- If the source was fully transferred AND no other pending transfer
+      -- still references this source asset, remove its empty zombie row
+      -- so the asset only exists at the destination. If another pending
+      -- transfer exists, leave the zero-qty row; it will be cleaned up
+      -- when that transfer is resolved.
+      if coalesce(src.qty, 0) = 0
+         and not exists (
+           select 1 from public.tmc_transfers
+           where asset_id = src.id
+             and status = 'pending'
+             and id <> tr.id
+         ) then
         delete from public.tmc_assets where id = src.id;
       end if;
     else
