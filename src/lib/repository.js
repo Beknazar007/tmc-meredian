@@ -246,11 +246,18 @@ function fromAssetRow(a) {
 function fromTransferRow(t) {
   return {
     ...t,
+    assetId: t.asset_id,
+    assetName: t.asset_name,
     fromWhId: t.from_wh_id,
+    fromWhName: t.from_wh_name,
     toWhId: t.to_wh_id,
+    toWhName: t.to_wh_name,
     fromResponsibleId: t.from_responsible_id,
+    fromResponsibleName: t.from_responsible_name,
     toResponsibleId: t.to_responsible_id,
+    toResponsibleName: t.to_responsible_name,
     createdAt: t.created_at,
+    createdBy: t.created_by,
     confirmedAt: t.confirmed_at,
     confirmedBy: t.confirmed_by,
     rejectReason: t.reject_reason ?? null,
