@@ -1,9 +1,19 @@
 import { createClient } from "@supabase/supabase-js";
 
+const runtimeConfig =
+  typeof window !== "undefined" && window.__RUNTIME_CONFIG__ ? window.__RUNTIME_CONFIG__ : {};
+
 // Accept both Vite and Next-style names to make deployments more forgiving.
-const url = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
+const url =
+  runtimeConfig.VITE_SUPABASE_URL ||
+  runtimeConfig.NEXT_PUBLIC_SUPABASE_URL ||
+  import.meta.env.VITE_SUPABASE_URL ||
+  import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
 const anonKey =
-  import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  runtimeConfig.VITE_SUPABASE_ANON_KEY ||
+  runtimeConfig.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
 export const hasSupabaseConfig = Boolean(url && anonKey);
 

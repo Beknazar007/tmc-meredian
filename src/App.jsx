@@ -104,16 +104,60 @@ export default function App() {
       throw new Error("Supabase не настроен. Вход возможен только через cloud-конфигурацию.");
     }
     const normalizedLogin = loginValue.trim().toLowerCase();
-    const authEmail = normalizedLogin.includes("@") ? normalizedLogin : `${normalizedLogin}@tmc.local`;
-    const authResult = await signInWithPassword(authEmail, password);
+    if (!normalizedLogin || !password) {
+      throw new Error("Введите логин (или email) и пароль.");
+    }
+
+    const emailCandidates = normalizedLogin.includes("@")
+      ? [normalizedLogin]
+      : [normalizedLogin, `${normalizedLogin}@tmc.local`];
+
+    let authResult = null;
+    let authError = null;
+    for (const email of emailCandidates) {
+      try {
+        authResult = await signInWithPassword(email, password);
+        authError = null;
+        break;
+      } catch (error) {
+        authError = error;
+      }
+    }
+    if (!authResult?.user) {
+      throw authError || new Error("Не удалось выполнить вход через Supabase Auth.");
+    }
+
     const authId = authResult.user?.id;
-    const matchedUser = users.find((user) => user.authUserId === authId || user.login.toLowerCase() === normalizedLogin);
+    const authEmail = authResult.user?.email?.toLowerCase() || "";
+
+    let usersForMatch = users;
+    try {
+      const cloud = await loadCloudState();
+      if (cloud?.users?.length) {
+        hydrateFromCloud(cloud);
+        usersForMatch = cloud.users;
+      }
+    } catch (error) {
+      console.warn("Profile refresh before login failed:", error?.message || error);
+    }
+
+    const matchedUser = usersForMatch.find(
+      (user) =>
+        user.authUserId === authId ||
+        user.login.toLowerCase() === normalizedLogin ||
+        (authEmail && user.login.toLowerCase() === authEmail)
+    );
 
     if (!matchedUser) {
       throw new Error("Пользователь авторизован, но его профиль не найден в tmc_users.");
     }
 
-    const next = { user: matchedUser };
+    // Auto-link profile to Auth user after first successful login.
+    if (!matchedUser.authUserId && authId) {
+      void updateUser(matchedUser.id, { authUserId: authId });
+    }
+
+    const next = { user: { ...matchedUser, authUserId: matchedUser.authUserId || authId || null } };
     void saveSession(next);
     setPage("warehouses");
   };
