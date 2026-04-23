@@ -73,8 +73,13 @@ create table if not exists public.tmc_transfers (
   qty numeric check (qty is null or qty > 0),
   unit text,
   confirmed_at timestamptz,
-  confirmed_by text
+  confirmed_by text,
+  reject_reason text
 );
+
+-- For existing deployments: make sure the reject_reason column is present.
+alter table public.tmc_transfers
+  add column if not exists reject_reason text;
 
 create table if not exists public.tmc_categories (
   id text primary key,
@@ -377,6 +382,14 @@ as $$
   );
 $$;
 
+-- ISO-8601 UTC timestamp matching the frontend's new Date().toISOString().
+create or replace function public.tmc_iso_now()
+returns text
+language sql
+as $$
+  select to_char((now() at time zone 'UTC'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+$$;
+
 create or replace function public.tmc_request_transfer(
   p_transfer_id text,
   p_transfer_no text,
@@ -398,46 +411,69 @@ create or replace function public.tmc_request_transfer(
 returns void
 language plpgsql
 as $$
+declare
+  src public.tmc_assets%rowtype;
 begin
+  select * into src from public.tmc_assets where id = p_asset_id for update;
+  if src.id is null then
+    raise exception 'Source asset not found: %', p_asset_id;
+  end if;
+
   insert into public.tmc_transfers (
-    id,
-    no,
-    asset_id,
-    asset_name,
-    from_wh_id,
-    from_wh_name,
-    to_wh_id,
-    to_wh_name,
-    from_responsible_id,
-    from_responsible_name,
-    to_responsible_id,
-    to_responsible_name,
-    qty,
-    unit,
-    notes,
-    status,
-    created_at,
-    created_by
-  )
-  values (
-    p_transfer_id,
-    p_transfer_no,
-    p_asset_id,
-    p_asset_name,
-    p_from_wh_id,
-    p_from_wh_name,
-    p_to_wh_id,
-    p_to_wh_name,
-    p_from_responsible_id,
-    p_from_responsible_name,
-    p_to_responsible_id,
-    p_to_responsible_name,
-    p_qty,
-    p_unit,
-    p_notes,
-    'pending',
-    now(),
-    p_actor
+    id, no, asset_id, asset_name,
+    from_wh_id, from_wh_name, to_wh_id, to_wh_name,
+    from_responsible_id, from_responsible_name,
+    to_responsible_id, to_responsible_name,
+    qty, unit, notes, status, created_at, created_by
+  ) values (
+    p_transfer_id, p_transfer_no, p_asset_id, p_asset_name,
+    p_from_wh_id, p_from_wh_name, p_to_wh_id, p_to_wh_name,
+    p_from_responsible_id, p_from_responsible_name,
+    p_to_responsible_id, p_to_responsible_name,
+    p_qty, p_unit, p_notes, 'pending', now(), p_actor
+  );
+
+  if p_qty is not null then
+    if coalesce(src.qty, 0) < p_qty then
+      raise exception 'Недостаточно количества на складе (есть %, нужно %)', coalesce(src.qty, 0), p_qty;
+    end if;
+    update public.tmc_assets
+    set qty = coalesce(qty, 0) - p_qty,
+        updated_at = now(),
+        history = coalesce(history, '[]'::jsonb) || jsonb_build_array(
+          jsonb_build_object(
+            'date', public.tmc_iso_now(),
+            'action', 'Отправлено (' || p_qty::text || ' ' || coalesce(p_unit, 'шт') || ')',
+            'warehouseId', src.warehouse_id,
+            'responsibleId', src.responsible_id,
+            'qty', p_qty,
+            'status', 'В пути',
+            'by', p_actor,
+            'notes', p_notes
+          )
+        )
+    where id = p_asset_id;
+  else
+    update public.tmc_assets
+    set status = 'В пути',
+        updated_at = now(),
+        history = coalesce(history, '[]'::jsonb) || jsonb_build_array(
+          jsonb_build_object(
+            'date', public.tmc_iso_now(),
+            'action', 'Отправлено на ' || coalesce(p_to_wh_name, 'склад'),
+            'warehouseId', src.warehouse_id,
+            'responsibleId', src.responsible_id,
+            'status', 'В пути',
+            'by', p_actor,
+            'notes', p_notes
+          )
+        )
+    where id = p_asset_id;
+  end if;
+
+  perform public.tmc_append_asset_movement(
+    p_asset_id, p_transfer_id, 'transfer_requested',
+    p_qty, p_unit, p_to_wh_id, p_to_responsible_id, p_actor, p_notes
   );
 end;
 $$;
@@ -451,10 +487,21 @@ language plpgsql
 as $$
 declare
   tr public.tmc_transfers%rowtype;
+  src public.tmc_assets%rowtype;
+  existing public.tmc_assets%rowtype;
+  new_asset_id text;
 begin
   select * into tr from public.tmc_transfers where id = p_transfer_id for update;
   if tr.id is null then
     raise exception 'Transfer not found: %', p_transfer_id;
+  end if;
+  if tr.status <> 'pending' then
+    raise exception 'Передача % уже обработана (статус: %)', p_transfer_id, tr.status;
+  end if;
+
+  select * into src from public.tmc_assets where id = tr.asset_id for update;
+  if src.id is null then
+    raise exception 'Source asset missing for transfer %', p_transfer_id;
   end if;
 
   update public.tmc_transfers
@@ -463,51 +510,165 @@ begin
       confirmed_by = p_actor
   where id = p_transfer_id;
 
+  if tr.qty is not null then
+    -- Quantity-based: add qty to an existing same-name asset at destination
+    -- warehouse, or clone a new asset row at the destination.
+    select * into existing from public.tmc_assets
+    where warehouse_id = tr.to_wh_id
+      and name = src.name
+      and id <> src.id
+    limit 1;
+
+    if existing.id is not null then
+      update public.tmc_assets
+      set qty = coalesce(qty, 0) + tr.qty,
+          responsible_id = coalesce(tr.to_responsible_id, responsible_id),
+          updated_at = now(),
+          history = coalesce(history, '[]'::jsonb) || jsonb_build_array(
+            jsonb_build_object(
+              'date', public.tmc_iso_now(),
+              'action', 'Получено (' || tr.qty::text || ' ' || coalesce(tr.unit, 'шт') || ')',
+              'warehouseId', tr.to_wh_id,
+              'responsibleId', coalesce(tr.to_responsible_id, existing.responsible_id),
+              'qty', tr.qty,
+              'status', 'На складе',
+              'by', p_actor,
+              'notes', tr.notes
+            )
+          )
+      where id = existing.id;
+    else
+      new_asset_id := 'TMC-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8));
+      insert into public.tmc_assets (
+        id, name, category, supplier, purchase_date, price,
+        responsible_id, notes, photo, unit, qty, min_qty, initial_qty,
+        warehouse_id, status, history, pending_woqty
+      ) values (
+        new_asset_id, src.name, src.category, src.supplier, src.purchase_date, src.price,
+        coalesce(tr.to_responsible_id, src.responsible_id), src.notes, src.photo, src.unit,
+        tr.qty, src.min_qty, tr.qty,
+        tr.to_wh_id, 'На складе',
+        jsonb_build_array(
+          jsonb_build_object(
+            'date', public.tmc_iso_now(),
+            'action', 'Получено (' || tr.qty::text || ' ' || coalesce(tr.unit, 'шт') || ')',
+            'warehouseId', tr.to_wh_id,
+            'responsibleId', tr.to_responsible_id,
+            'qty', tr.qty,
+            'status', 'На складе',
+            'by', p_actor,
+            'notes', tr.notes
+          )
+        ),
+        null
+      );
+    end if;
+  else
+    -- Single-unit: actually move the asset to the target warehouse.
+    update public.tmc_assets
+    set warehouse_id = tr.to_wh_id,
+        responsible_id = coalesce(tr.to_responsible_id, responsible_id),
+        status = 'На складе',
+        updated_at = now(),
+        history = coalesce(history, '[]'::jsonb) || jsonb_build_array(
+          jsonb_build_object(
+            'date', public.tmc_iso_now(),
+            'action', 'Получено на ' || coalesce(tr.to_wh_name, 'склад'),
+            'warehouseId', tr.to_wh_id,
+            'responsibleId', coalesce(tr.to_responsible_id, src.responsible_id),
+            'status', 'На складе',
+            'by', p_actor,
+            'notes', tr.notes
+          )
+        )
+    where id = tr.asset_id;
+  end if;
+
   perform public.tmc_append_asset_movement(
-    tr.asset_id,
-    tr.id,
-    'transfer_confirmed',
-    tr.qty,
-    tr.unit,
-    tr.to_wh_id,
-    tr.to_responsible_id,
-    p_actor,
-    tr.notes
+    tr.asset_id, tr.id, 'transfer_confirmed',
+    tr.qty, tr.unit, tr.to_wh_id, tr.to_responsible_id, p_actor, tr.notes
   );
 end;
 $$;
 
+-- Signature changed (added p_reason): drop the old two-arg version first.
+drop function if exists public.tmc_reject_transfer(text, text);
+
 create or replace function public.tmc_reject_transfer(
   p_transfer_id text,
-  p_actor text
+  p_actor text,
+  p_reason text
 )
 returns void
 language plpgsql
 as $$
 declare
   tr public.tmc_transfers%rowtype;
+  src public.tmc_assets%rowtype;
+  reason_text text;
 begin
+  reason_text := nullif(btrim(coalesce(p_reason, '')), '');
+  if reason_text is null then
+    raise exception 'Необходимо указать причину отклонения';
+  end if;
+
   select * into tr from public.tmc_transfers where id = p_transfer_id for update;
   if tr.id is null then
     raise exception 'Transfer not found: %', p_transfer_id;
   end if;
+  if tr.status <> 'pending' then
+    raise exception 'Передача % уже обработана (статус: %)', p_transfer_id, tr.status;
+  end if;
+
+  select * into src from public.tmc_assets where id = tr.asset_id for update;
 
   update public.tmc_transfers
   set status = 'rejected',
       confirmed_at = now(),
-      confirmed_by = p_actor
+      confirmed_by = p_actor,
+      reject_reason = reason_text
   where id = p_transfer_id;
 
+  if src.id is not null then
+    if tr.qty is not null then
+      update public.tmc_assets
+      set qty = coalesce(qty, 0) + tr.qty,
+          updated_at = now(),
+          history = coalesce(history, '[]'::jsonb) || jsonb_build_array(
+            jsonb_build_object(
+              'date', public.tmc_iso_now(),
+              'action', 'Отклонено (+ ' || tr.qty::text || ' ' || coalesce(tr.unit, 'шт') || ')',
+              'warehouseId', src.warehouse_id,
+              'responsibleId', src.responsible_id,
+              'qty', tr.qty,
+              'status', 'На складе',
+              'by', p_actor,
+              'notes', 'Причина: ' || reason_text
+            )
+          )
+      where id = tr.asset_id;
+    else
+      update public.tmc_assets
+      set status = 'На складе',
+          updated_at = now(),
+          history = coalesce(history, '[]'::jsonb) || jsonb_build_array(
+            jsonb_build_object(
+              'date', public.tmc_iso_now(),
+              'action', 'Отклонено (возврат на ' || coalesce(tr.from_wh_name, 'склад') || ')',
+              'warehouseId', src.warehouse_id,
+              'responsibleId', src.responsible_id,
+              'status', 'На складе',
+              'by', p_actor,
+              'notes', 'Причина: ' || reason_text
+            )
+          )
+      where id = tr.asset_id;
+    end if;
+  end if;
+
   perform public.tmc_append_asset_movement(
-    tr.asset_id,
-    tr.id,
-    'transfer_rejected',
-    tr.qty,
-    tr.unit,
-    tr.from_wh_id,
-    tr.from_responsible_id,
-    p_actor,
-    tr.notes
+    tr.asset_id, tr.id, 'transfer_rejected',
+    tr.qty, tr.unit, tr.from_wh_id, tr.from_responsible_id, p_actor, reason_text
   );
 end;
 $$;
@@ -636,7 +797,7 @@ grant execute on function public.tmc_request_transfer(
 ) to authenticated;
 
 grant execute on function public.tmc_confirm_transfer(text, text) to authenticated;
-grant execute on function public.tmc_reject_transfer(text, text) to authenticated;
+grant execute on function public.tmc_reject_transfer(text, text, text) to authenticated;
 grant execute on function public.tmc_request_writeoff(text, numeric, text, text) to authenticated;
 grant execute on function public.tmc_approve_writeoff(text, numeric, text, text) to authenticated;
 grant execute on function public.tmc_reject_writeoff(text, text) to authenticated;

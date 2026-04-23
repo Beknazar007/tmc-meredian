@@ -665,11 +665,13 @@ function AssetDetail(props) {
 
   const rejectIncoming = async () => {
     if (!pendingTransfer) return;
+    const reason = (window.prompt("Укажите причину отклонения:") || "").trim();
+    if (!reason) return;
     if (hasSupabaseConfig) {
-      await syncAfterRpc(() => rpcRejectTransfer(pendingTransfer.id, session.user.name));
+      await syncAfterRpc(() => rpcRejectTransfer(pendingTransfer.id, session.user.name, reason));
       return;
     }
-    rejectTransfer(pendingTransfer, assets, saveAssets, transfers, saveTransfers, session.user.name);
+    rejectTransfer(pendingTransfer, assets, saveAssets, transfers, saveTransfers, session.user.name, reason);
   };
 
   return (
@@ -858,11 +860,15 @@ function IncomingPage({ transfers, assets, saveAssets, saveTransfers, isAdmin, m
               </button>
               <button
                 style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })}
-                onClick={() =>
-                  hasSupabaseConfig
-                    ? syncAfterRpc(() => rpcRejectTransfer(transfer.id, session.user.name))
-                    : rejectTransfer(transfer, assets, saveAssets, transfers, saveTransfers, session.user.name)
-                }
+                onClick={async () => {
+                  const reason = (window.prompt("Укажите причину отклонения:") || "").trim();
+                  if (!reason) return;
+                  if (hasSupabaseConfig) {
+                    await syncAfterRpc(() => rpcRejectTransfer(transfer.id, session.user.name, reason));
+                  } else {
+                    rejectTransfer(transfer, assets, saveAssets, transfers, saveTransfers, session.user.name, reason);
+                  }
+                }}
               >
                 Отклонить
               </button>
@@ -1594,7 +1600,8 @@ function confirmTransfer(transfer, assets, saveAssets, transfers, saveTransfers,
   saveTransfers(transfers.map((item) => (item.id === transfer.id ? { ...item, status: "confirmed", confirmedAt: nowISO(), confirmedBy: actor } : item)));
 }
 
-function rejectTransfer(transfer, assets, saveAssets, transfers, saveTransfers, actor) {
+function rejectTransfer(transfer, assets, saveAssets, transfers, saveTransfers, actor, reason) {
+  const trimmedReason = (reason || "").trim();
   saveAssets(
     assets.map((item) =>
       item.id === transfer.assetId
@@ -1612,14 +1619,20 @@ function rejectTransfer(transfer, assets, saveAssets, transfers, saveTransfers, 
                 qty: transfer.qty,
                 status: "На складе",
                 by: actor,
-                notes: transfer.notes,
+                notes: trimmedReason ? `Причина: ${trimmedReason}` : transfer.notes,
               },
             ],
           }
         : item
     )
   );
-  saveTransfers(transfers.map((item) => (item.id === transfer.id ? { ...item, status: "rejected", confirmedAt: nowISO(), confirmedBy: actor } : item)));
+  saveTransfers(
+    transfers.map((item) =>
+      item.id === transfer.id
+        ? { ...item, status: "rejected", confirmedAt: nowISO(), confirmedBy: actor, rejectReason: trimmedReason || null }
+        : item
+    )
+  );
 }
 
 function approveWriteoff(asset, qtyToWrite, notes, saveAssets, assets, actor) {

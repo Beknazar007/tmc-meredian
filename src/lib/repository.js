@@ -80,6 +80,7 @@ function toTransferRow(transfer) {
     unit: transfer.unit ?? null,
     confirmed_at: transfer.confirmedAt ?? transfer.confirmed_at ?? null,
     confirmed_by: transfer.confirmedBy ?? transfer.confirmed_by ?? null,
+    reject_reason: transfer.rejectReason ?? transfer.reject_reason ?? null,
   };
 }
 
@@ -252,6 +253,7 @@ function fromTransferRow(t) {
     createdAt: t.created_at,
     confirmedAt: t.confirmed_at,
     confirmedBy: t.confirmed_by,
+    rejectReason: t.reject_reason ?? null,
   };
 }
 
@@ -499,10 +501,11 @@ export async function rpcConfirmTransfer(transferId, actor) {
   });
 }
 
-export async function rpcRejectTransfer(transferId, actor) {
+export async function rpcRejectTransfer(transferId, actor, reason) {
   return callRpc("tmc_reject_transfer", {
     p_transfer_id: transferId,
     p_actor: actor,
+    p_reason: reason,
   });
 }
 
