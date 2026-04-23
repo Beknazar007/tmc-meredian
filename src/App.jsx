@@ -638,7 +638,7 @@ function AssetDetail(props) {
     <div>
       <Breadcrumb items={[{ label: "Склады", onClick: () => nav("warehouses") }, { label: warehouse?.name || "—", onClick: () => warehouse && nav("warehouse", { warehouseId: warehouse.id }) }, { label: asset.name }]} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
         <div>
           <Card>
             <div style={{ position: "relative", aspectRatio: "16 / 10", borderRadius: 12, overflow: "hidden", background: COLORS.bg, display: "grid", placeItems: "center" }}>
@@ -1288,7 +1288,7 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
             ))}
           </select>
         </Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
           <Field label="Количество"><input style={inputStyle} type="number" min="0" step="0.01" value={form.qty} onChange={(e) => setForm((p) => ({ ...p, qty: e.target.value }))} /></Field>
           <Field label="Единица измерения">
             <select style={inputStyle} value={form.unit} onChange={(e) => setForm((p) => ({ ...p, unit: e.target.value }))}>
@@ -1317,15 +1317,11 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
           display: "flex",
           gap: 8,
           marginTop: 16,
-          position: "sticky",
-          bottom: 0,
-          background: COLORS.surface,
-          paddingTop: 8,
-          borderTop: `1px solid ${COLORS.border}`,
+          flexWrap: "wrap",
         }}
       >
-        <button style={{ ...buttonStyle(COLORS.accent), flex: 1 }} onClick={submit} disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</button>
-        <button style={{ ...buttonStyle("transparent", { border: `1px solid ${COLORS.border}` }), flex: 1 }} onClick={onCancel} disabled={saving}>Отмена</button>
+        <button style={{ ...buttonStyle(COLORS.accent), flex: "1 1 180px" }} onClick={submit} disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</button>
+        <button style={{ ...buttonStyle("transparent", { border: `1px solid ${COLORS.border}` }), flex: "1 1 180px" }} onClick={onCancel} disabled={saving}>Отмена</button>
       </div>
     </div>
   );
@@ -1427,7 +1423,7 @@ function ExportPage({ assets, transfers, warehouses, users }) {
       <H1>Экспорт в Excel</H1>
       <Card>
         <SectionTitle>Фильтр по периоду</SectionTitle>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
           <Field label="Дата с"><input type="date" style={inputStyle} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></Field>
           <Field label="Дата по"><input type="date" style={inputStyle} value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></Field>
         </div>
@@ -1716,7 +1712,7 @@ function Breadcrumb({ items }) {
 
 function InfoLine({ label, value }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(110px, 160px) 1fr", gap: 10 }}>
       <div style={{ color: COLORS.muted }}>{label}</div>
       <div>{value || "—"}</div>
     </div>
@@ -1725,7 +1721,7 @@ function InfoLine({ label, value }) {
 
 function Modal({ children, onClose }) {
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "grid", placeItems: "center", padding: 16, zIndex: 50 }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "grid", placeItems: "center", padding: 16, zIndex: 50, overflowY: "auto" }}>
       <div onClick={(e) => e.stopPropagation()}>{children}</div>
     </div>
   );
