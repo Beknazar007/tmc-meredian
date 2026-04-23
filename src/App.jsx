@@ -1407,12 +1407,11 @@ function WarehouseAdmin({ warehouses, users, assets, saveWarehouses }) {
 }
 
 function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, resetUserPassword, deleteUser, hasSupabaseConfig }) {
-  const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseIds: [], authUserId: "" });
+  const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseIds: [] });
   const [editId, setEditId] = useState("");
   const [saving, setSaving] = useState(false);
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const reset = () => {
-    setForm({ name: "", login: "", password: "", role: "user", warehouseIds: [], authUserId: "" });
+    setForm({ name: "", login: "", password: "", role: "user", warehouseIds: [] });
     setEditId("");
   };
 
@@ -1454,11 +1453,6 @@ function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, 
       alert("Для нового пользователя укажите пароль.");
       return;
     }
-    const authUserId = form.authUserId.trim();
-    if (authUserId && !uuidRegex.test(authUserId)) {
-      alert("Auth User ID должен быть валидным UUID или пустым.");
-      return;
-    }
     const warehouseIds = form.role === "admin" ? [] : form.warehouseIds;
     const primaryWarehouseId = warehouseIds[0] || null;
     const payload = {
@@ -1466,7 +1460,6 @@ function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, 
       login: form.login.trim(),
       role: form.role,
       warehouseId: primaryWarehouseId,
-      authUserId: authUserId || null,
     };
     if (!editId || password) {
       payload.password = password;
@@ -1495,28 +1488,11 @@ function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, 
     <Card>
       <SectionTitle>Пользователи</SectionTitle>
       <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
-        {hasSupabaseConfig && (
-          <div
-            style={{
-              background: "#2a1f0f",
-              border: `1px solid ${COLORS.warn}`,
-              borderRadius: 10,
-              color: "#fcd34d",
-              padding: "10px 12px",
-              fontSize: 13,
-              lineHeight: 1.5,
-            }}
-          >
-            Создание пользователя здесь добавляет профиль только в таблицу `tmc_users`. Для входа также нужен пользователь в Supabase Auth
-            (email/password) и, при необходимости, связь через `auth_user_id`.
-          </div>
-        )}
         <Field label="ФИО"><input style={inputStyle} value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field>
-        <Field label="Email (Supabase Auth)"><input style={inputStyle} value={form.login} onChange={(e) => setForm((p) => ({ ...p, login: e.target.value }))} /></Field>
+        <Field label="Email"><input style={inputStyle} value={form.login} onChange={(e) => setForm((p) => ({ ...p, login: e.target.value }))} /></Field>
         <Field label={editId ? "Пароль (оставьте пустым, чтобы не менять)" : "Пароль *"}>
           <input type="password" style={inputStyle} value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
         </Field>
-        <Field label="Auth User ID (uuid, optional)"><input style={inputStyle} value={form.authUserId} onChange={(e) => setForm((p) => ({ ...p, authUserId: e.target.value }))} /></Field>
         <Field label="Роль">
           <select style={inputStyle} value={form.role} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}>
             <option value="user">user</option>
@@ -1577,7 +1553,7 @@ function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, 
                 <Muted>{user.login} · {user.role}{whNames ? ` · ${whNames}` : ""}</Muted>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => { setEditId(user.id); setForm({ name: user.name, login: user.login, password: "", role: user.role, warehouseIds: userWhIds, authUserId: user.authUserId || "" }); }}>
+                <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => { setEditId(user.id); setForm({ name: user.name, login: user.login, password: "", role: user.role, warehouseIds: userWhIds }); }}>
                   Редактировать
                 </button>
                 <button
