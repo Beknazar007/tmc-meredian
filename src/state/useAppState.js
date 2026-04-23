@@ -19,6 +19,15 @@ import {
 } from "../lib/repository";
 import { getSupabaseSession, hasSupabaseConfig, supabase } from "../lib/supabase";
 
+const AUTH_DEBUG =
+  (typeof window !== "undefined" && window.__RUNTIME_CONFIG__?.AUTH_DEBUG === "1") ||
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_AUTH_DEBUG === "1");
+const dlog = (...args) => {
+  if (!AUTH_DEBUG) return;
+  // eslint-disable-next-line no-console
+  console.log("[AUTH]", new Date().toISOString().slice(11, 23), ...args);
+};
+
 async function runCloudWrite(fn, options = {}) {
   const { requiresAuth = true } = options;
   try {
@@ -47,7 +56,25 @@ export function useAppState(defaults) {
   const [assets, setAssets] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [session, setSession] = useState(null);
+  const [session, setSessionRaw] = useState(null);
+  // authDecision tracks whether we have a *definitive* answer about auth:
+  //   "pending"  -> unknown (show Splash, never Login)
+  //   "loggedIn" -> session has a user
+  //   "loggedOut"-> user is genuinely signed out (Login is OK to render)
+  const [authDecision, setAuthDecision] = useState("pending");
+
+  // setSession is wrapped so we always keep authDecision in lockstep with
+  // session, AND we can't accidentally flash `null` when the user is actually
+  // logged in (a transient null without a real SIGNED_OUT is ignored).
+  const setSession = useCallback((value, reason = "unknown") => {
+    dlog("setSession ->", value ? `user:${value.user?.login}` : "null", "reason:", reason);
+    setSessionRaw(value);
+    if (value?.user) {
+      setAuthDecision("loggedIn");
+    } else if (reason === "signed_out" || reason === "init_resolved_null" || reason === "no_supabase") {
+      setAuthDecision("loggedOut");
+    }
+  }, []);
 
   const usersRef = useRef(users);
   const warehousesRef = useRef(warehouses);
@@ -91,7 +118,9 @@ export function useAppState(defaults) {
 
     const maybeFinishLoading = () => {
       if (!alive || !cloudLoaded || !authResolved) return;
-      setSession(resolveSessionFromAuth());
+      const resolved = resolveSessionFromAuth();
+      dlog("maybeFinishLoading: resolved =", resolved ? `user:${resolved.user?.login}` : "null");
+      setSession(resolved, resolved ? "init_resolved_user" : "init_resolved_null");
       setReady(true);
     };
 
@@ -101,7 +130,7 @@ export function useAppState(defaults) {
       setAssets([]);
       setTransfers([]);
       setCategories(defaults.categories || []);
-      setSession(null);
+      setSession(null, "no_supabase");
       setReady(true);
       return () => {
         alive = false;
@@ -142,6 +171,15 @@ export function useAppState(defaults) {
     if (supabase) {
       const { data } = supabase.auth.onAuthStateChange((event, authSession) => {
         if (!alive) return;
+        dlog(
+          "onAuthStateChange:",
+          event,
+          authSession?.user ? `user:${authSession.user.email}` : "no-user",
+          "authResolved:",
+          authResolved,
+          "cloudLoaded:",
+          cloudLoaded
+        );
         latestAuthSession = authSession;
 
         if (!authResolved) {
@@ -151,12 +189,15 @@ export function useAppState(defaults) {
         }
 
         if (event === "SIGNED_OUT") {
-          setSession(null);
+          setSession(null, "signed_out");
           return;
         }
-        if ((event === "SIGNED_IN" || event === "USER_UPDATED") && authSession?.user) {
+        if (
+          (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") &&
+          authSession?.user
+        ) {
           const next = resolveSessionFromAuth();
-          if (next) setSession(next);
+          if (next) setSession(next, `event:${event}`);
         }
       });
       authSubscription = data?.subscription;
@@ -301,9 +342,14 @@ export function useAppState(defaults) {
   }, []);
 
   const saveSession = useCallback(async (value) => {
-    setSession(value);
+    setSession(value, value ? "save_user" : "save_null");
     return true;
-  }, []);
+  }, [setSession]);
+
+  const clearSession = useCallback(async () => {
+    setSession(null, "signed_out");
+    return true;
+  }, [setSession]);
 
   const hydrateFromCloud = useCallback((cloud) => {
     // NOTE: we intentionally do NOT touch session here. Session is owned by
@@ -364,6 +410,7 @@ export function useAppState(defaults) {
       transfers,
       categories,
       session,
+      authDecision,
       saveUsers,
       createUser,
       updateUser,
@@ -374,9 +421,23 @@ export function useAppState(defaults) {
       saveTransfers,
       saveCategories,
       saveSession,
+      clearSession,
       hydrateFromCloud,
       refreshSlice,
     }),
-    [ready, users, warehouses, assets, transfers, categories, session, hydrateFromCloud, refreshSlice]
+    [
+      ready,
+      users,
+      warehouses,
+      assets,
+      transfers,
+      categories,
+      session,
+      authDecision,
+      saveSession,
+      clearSession,
+      hydrateFromCloud,
+      refreshSlice,
+    ]
   );
 }

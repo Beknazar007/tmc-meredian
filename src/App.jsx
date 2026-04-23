@@ -79,6 +79,7 @@ export default function App() {
     transfers,
     categories,
     session,
+    authDecision,
     saveUsers,
     createUser,
     updateUser,
@@ -89,6 +90,7 @@ export default function App() {
     saveTransfers,
     saveCategories,
     saveSession,
+    clearSession,
     hydrateFromCloud,
     refreshSlice,
   } = useAppState(
@@ -171,7 +173,7 @@ export default function App() {
         await signOutSupabase();
       }
     } finally {
-      void saveSession(null);
+      void clearSession();
     }
   };
 
@@ -263,8 +265,25 @@ export default function App() {
     };
   }, [ready, session?.user?.id, hydrateFromCloud, saveSession, refreshSlice]);
 
+  if (typeof window !== "undefined" && (window.__RUNTIME_CONFIG__?.AUTH_DEBUG === "1" || import.meta.env?.VITE_AUTH_DEBUG === "1")) {
+    // eslint-disable-next-line no-console
+    console.log(
+      "[AUTH]",
+      new Date().toISOString().slice(11, 23),
+      "App render ->",
+      "ready:", ready,
+      "session:", session?.user?.login || "null",
+      "authDecision:", authDecision
+    );
+  }
+
   if (!ready) return <Splash />;
+  // Only render Login when we are CERTAIN the user is logged out.
+  // If authDecision is still "pending" (e.g. transient null during token
+  // refresh, realtime user-row update, etc.) keep showing Splash instead of
+  // flashing Login. The login page appears only on genuine signed-out state.
   if (!session) {
+    if (authDecision !== "loggedOut") return <Splash />;
     return (
       <Login
         onLogin={login}
