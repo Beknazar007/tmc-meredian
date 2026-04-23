@@ -283,6 +283,31 @@ create policy tmc_asset_movements_rw_policy on public.tmc_asset_movements
 for all using (auth.role() in ('authenticated', 'anon'))
 with check (auth.role() = 'authenticated');
 
+-- Explicit API grants for Supabase roles.
+grant usage on schema public to anon, authenticated;
+
+grant select on table
+  public.tmc_users,
+  public.tmc_warehouses,
+  public.tmc_assets,
+  public.tmc_transfers,
+  public.tmc_categories,
+  public.tmc_sessions,
+  public.tmc_warehouse_responsibles,
+  public.tmc_asset_movements
+to anon;
+
+grant select, insert, update, delete on table
+  public.tmc_users,
+  public.tmc_warehouses,
+  public.tmc_assets,
+  public.tmc_transfers,
+  public.tmc_categories,
+  public.tmc_sessions,
+  public.tmc_warehouse_responsibles,
+  public.tmc_asset_movements
+to authenticated;
+
 create or replace function public.tmc_append_asset_movement(
   p_asset_id text,
   p_transfer_id text,
@@ -574,13 +599,34 @@ begin
 end;
 $$;
 
+grant execute on function public.tmc_request_transfer(
+  text, text, text, text, text, text, text, text, text, text, text, text, numeric, text, text, text
+) to authenticated;
+
+grant execute on function public.tmc_confirm_transfer(text, text) to authenticated;
+grant execute on function public.tmc_reject_transfer(text, text) to authenticated;
+grant execute on function public.tmc_request_writeoff(text, numeric, text, text) to authenticated;
+grant execute on function public.tmc_approve_writeoff(text, numeric, text, text) to authenticated;
+grant execute on function public.tmc_reject_writeoff(text, text) to authenticated;
+
 -- Storage setup for asset photos.
 insert into storage.buckets (id, name, public)
 values ('asset-photos', 'asset-photos', true)
 on conflict (id) do update
 set public = excluded.public;
 
-alter table storage.objects enable row level security;
+do $$
+begin
+  -- `storage.objects` is owned by a managed role on some Supabase setups.
+  -- Skip RLS enablement when the current role is not the owner.
+  begin
+    alter table storage.objects enable row level security;
+  exception
+    when insufficient_privilege then
+      raise notice 'Skipping RLS enable on storage.objects: current role is not table owner.';
+  end;
+end;
+$$;
 
 do $$
 begin

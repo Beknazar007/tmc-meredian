@@ -32,6 +32,7 @@ const storage = {
 async function runCloudWrite(fn, value, options = {}) {
   const { requiresAuth = true } = options;
   try {
+    if (!hasSupabaseConfig) return;
     if (hasSupabaseConfig && requiresAuth) {
       const authSession = await getSupabaseSession();
       if (!authSession?.user) return;
