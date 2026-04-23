@@ -209,6 +209,24 @@ export default function App() {
   }, [ready, session, saveSession]);
 
   useEffect(() => {
+    if (!ready || !hasSupabaseConfig || session) return;
+    let alive = true;
+    (async () => {
+      const authSession = await getSupabaseSession();
+      if (!alive || !authSession?.user) return;
+      const authId = authSession.user.id;
+      const authEmail = (authSession.user.email || "").toLowerCase();
+      const matchedUser = users.find((user) => user.authUserId === authId || user.login.toLowerCase() === authEmail);
+      if (matchedUser) {
+        void saveSession({ user: matchedUser });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [ready, session, users, saveSession]);
+
+  useEffect(() => {
     if (!ready || !hasSupabaseConfig || !session?.user) return;
     let alive = true;
 

@@ -5,7 +5,6 @@ import {
   loadCloudState,
   saveAssets as saveAssetsCloud,
   saveCategories as saveCategoriesCloud,
-  saveSession as saveSessionCloud,
   saveTransfers as saveTransfersCloud,
   updateUser as updateUserCloud,
   saveUsers as saveUsersCloud,
@@ -152,7 +151,8 @@ export function useAppState(defaults) {
 
   const saveSession = async (value) => {
     setSession(value);
-    return runCloudWrite(() => saveSessionCloud(value), { requiresAuth: false });
+    void value;
+    return true;
   };
 
   const hydrateFromCloud = (cloud) => {

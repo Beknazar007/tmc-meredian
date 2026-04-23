@@ -6,7 +6,6 @@ const TABLES = {
   assets: "tmc_assets",
   transfers: "tmc_transfers",
   categories: "tmc_categories",
-  sessions: "tmc_sessions",
 };
 
 const STORAGE_BUCKET = "asset-photos";
@@ -177,18 +176,13 @@ async function readTable(table, orderBy = "id") {
 
 export async function loadCloudState() {
   assertConfiguredAndClient();
-  const [users, warehouses, assets, transfers, categories, sessions] = await Promise.all([
+  const [users, warehouses, assets, transfers, categories] = await Promise.all([
     readTable(TABLES.users),
     readTable(TABLES.warehouses),
     readTable(TABLES.assets),
     readTable(TABLES.transfers, "created_at"),
     readTable(TABLES.categories),
-    readTable(TABLES.sessions, "updated_at"),
   ]);
-
-  const activeSession = [...sessions]
-    .reverse()
-    .find((s) => s.is_active && s.payload && typeof s.payload === "object");
 
   return {
     users: users.map(fromUserRow),
@@ -217,7 +211,7 @@ export async function loadCloudState() {
       confirmedBy: t.confirmed_by,
     })),
     categories: categories.map((c) => c.name),
-    session: activeSession?.payload || null,
+    session: null,
   };
 }
 
@@ -335,16 +329,9 @@ export async function saveCategories(categories) {
 }
 
 export async function saveSession(session) {
-  assertConfiguredAndClient();
-  const payload = session || null;
-  const row = {
-    id: "active-session",
-    is_active: Boolean(payload),
-    payload,
-    updated_at: new Date().toISOString(),
-  };
-  const { error } = await supabase.from(TABLES.sessions).upsert(row, { onConflict: "id" });
-  if (error) throw error;
+  // Session persistence is handled by Supabase Auth per device.
+  // Kept as noop for compatibility with existing call sites.
+  void session;
 }
 
 async function callRpc(name, params) {
