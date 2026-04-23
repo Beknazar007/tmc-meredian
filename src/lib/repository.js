@@ -301,7 +301,6 @@ export async function loadCloudState() {
     assets,
     transfers,
     categories,
-    session: null,
   };
 }
 

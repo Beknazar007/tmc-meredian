@@ -306,19 +306,16 @@ export function useAppState(defaults) {
   }, []);
 
   const hydrateFromCloud = useCallback((cloud) => {
-    const nextUsers = cloud.users || [];
-    const nextWarehouses = cloud.warehouses || [];
-    const nextAssets = cloud.assets || [];
-    const nextTransfers = cloud.transfers || [];
-    const nextCategories = cloud.categories || [];
-    const nextSession = cloud.session || null;
-
-    setUsers(nextUsers);
-    setWarehouses(nextWarehouses);
-    setAssets(nextAssets);
-    setTransfers(nextTransfers);
-    setCategories(nextCategories);
-    setSession(nextSession);
+    // NOTE: we intentionally do NOT touch session here. Session is owned by
+    // Supabase Auth (onAuthStateChange) and must survive background refreshes.
+    // Previously this function cleared session -> null on every refresh, which
+    // caused Login to flash for a frame before the subsequent saveSession
+    // restored it. Only hydrate the cloud data slices.
+    if (cloud.users) setUsers(cloud.users);
+    if (cloud.warehouses) setWarehouses(cloud.warehouses);
+    if (cloud.assets) setAssets(cloud.assets);
+    if (cloud.transfers) setTransfers(cloud.transfers);
+    if (cloud.categories) setCategories(cloud.categories);
   }, []);
 
   const refreshSlice = useCallback(async (slice) => {
