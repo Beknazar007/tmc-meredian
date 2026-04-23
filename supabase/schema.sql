@@ -490,6 +490,7 @@ declare
   src public.tmc_assets%rowtype;
   existing public.tmc_assets%rowtype;
   new_asset_id text;
+  target_asset_id text;
   caller public.tmc_users%rowtype;
 begin
   select * into tr from public.tmc_transfers where id = p_transfer_id for update;
@@ -520,7 +521,11 @@ begin
 
   if tr.qty is not null then
     -- Quantity-based: add qty to an existing same-name asset at destination
-    -- warehouse, or clone a new asset row at the destination.
+    -- warehouse, or move/clone the asset row to the destination. If the
+    -- source quantity is now 0 (full transfer), we do NOT keep a zombie row
+    -- at the source: either the source row is moved to the destination
+    -- (preserving its full history), or it is deleted after merging into
+    -- an existing destination asset.
     select * into existing from public.tmc_assets
     where warehouse_id = tr.to_wh_id
       and name = src.name
@@ -545,31 +550,66 @@ begin
             )
           )
       where id = existing.id;
+
+      target_asset_id := existing.id;
+
+      -- If the source was fully transferred, remove its empty zombie row
+      -- so the asset only exists at the destination.
+      if coalesce(src.qty, 0) = 0 then
+        delete from public.tmc_assets where id = src.id;
+      end if;
     else
-      new_asset_id := 'TMC-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8));
-      insert into public.tmc_assets (
-        id, name, category, supplier, purchase_date, price,
-        responsible_id, notes, photo, unit, qty, min_qty, initial_qty,
-        warehouse_id, status, history, pending_woqty
-      ) values (
-        new_asset_id, src.name, src.category, src.supplier, src.purchase_date, src.price,
-        coalesce(tr.to_responsible_id, src.responsible_id), src.notes, src.photo, src.unit,
-        tr.qty, src.min_qty, tr.qty,
-        tr.to_wh_id, 'На складе',
-        jsonb_build_array(
-          jsonb_build_object(
-            'date', public.tmc_iso_now(),
-            'action', 'Получено (' || tr.qty::text || ' ' || coalesce(tr.unit, 'шт') || ')',
-            'warehouseId', tr.to_wh_id,
-            'responsibleId', tr.to_responsible_id,
-            'qty', tr.qty,
-            'status', 'На складе',
-            'by', p_actor,
-            'notes', tr.notes
-          )
-        ),
-        null
-      );
+      if coalesce(src.qty, 0) = 0 then
+        -- Full transfer with no existing destination row: MOVE the source
+        -- asset itself to the destination warehouse so history stays with
+        -- the asset and nothing lingers at the source.
+        update public.tmc_assets
+        set warehouse_id = tr.to_wh_id,
+            responsible_id = coalesce(tr.to_responsible_id, responsible_id),
+            qty = tr.qty,
+            status = 'На складе',
+            updated_at = now(),
+            history = coalesce(history, '[]'::jsonb) || jsonb_build_array(
+              jsonb_build_object(
+                'date', public.tmc_iso_now(),
+                'action', 'Получено (' || tr.qty::text || ' ' || coalesce(tr.unit, 'шт') || ')',
+                'warehouseId', tr.to_wh_id,
+                'responsibleId', coalesce(tr.to_responsible_id, src.responsible_id),
+                'qty', tr.qty,
+                'status', 'На складе',
+                'by', p_actor,
+                'notes', tr.notes
+              )
+            )
+        where id = src.id;
+        target_asset_id := src.id;
+      else
+        new_asset_id := 'TMC-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8));
+        insert into public.tmc_assets (
+          id, name, category, supplier, purchase_date, price,
+          responsible_id, notes, photo, unit, qty, min_qty, initial_qty,
+          warehouse_id, status, history, pending_woqty
+        ) values (
+          new_asset_id, src.name, src.category, src.supplier, src.purchase_date, src.price,
+          coalesce(tr.to_responsible_id, src.responsible_id), src.notes, src.photo, src.unit,
+          tr.qty, src.min_qty, tr.qty,
+          tr.to_wh_id, 'На складе',
+          jsonb_build_array(
+            jsonb_build_object(
+              'date', public.tmc_iso_now(),
+              'action', 'Получено (' || tr.qty::text || ' ' || coalesce(tr.unit, 'шт') || ')',
+              'warehouseId', tr.to_wh_id,
+              'responsibleId', tr.to_responsible_id,
+              'qty', tr.qty,
+              'status', 'На складе',
+              'by', p_actor,
+              'notes', tr.notes
+            )
+          ),
+          null
+        );
+        target_asset_id := new_asset_id;
+      end if;
     end if;
   else
     -- Single-unit: actually move the asset to the target warehouse.
@@ -590,10 +630,13 @@ begin
           )
         )
     where id = tr.asset_id;
+    target_asset_id := tr.asset_id;
   end if;
 
+  -- Log the movement against the asset that now represents the transferred
+  -- items (destination-side), not the possibly-deleted source row.
   perform public.tmc_append_asset_movement(
-    tr.asset_id, tr.id, 'transfer_confirmed',
+    target_asset_id, tr.id, 'transfer_confirmed',
     tr.qty, tr.unit, tr.to_wh_id, tr.to_responsible_id, p_actor, tr.notes
   );
 end;

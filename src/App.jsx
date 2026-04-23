@@ -1876,11 +1876,28 @@ function confirmTransfer(transfer, assets, saveAssets, transfers, saveTransfers,
       by: actor,
       notes: transfer.notes,
     };
+    const srcEmpty = (asset.qty || 0) === 0;
     if (existing) {
-      saveAssets(
-        assets.map((item) =>
+      const next = assets
+        .map((item) =>
           item.id === existing.id
             ? { ...item, qty: (item.qty || 0) + transfer.qty, history: [...(item.history || []), historyEntry] }
+            : item
+        )
+        .filter((item) => !(srcEmpty && item.id === asset.id));
+      saveAssets(next);
+    } else if (srcEmpty) {
+      saveAssets(
+        assets.map((item) =>
+          item.id === asset.id
+            ? {
+                ...item,
+                warehouseId: transfer.toWhId,
+                responsibleId: transfer.toResponsibleId || item.responsibleId,
+                qty: transfer.qty,
+                status: "На складе",
+                history: [...(item.history || []), historyEntry],
+              }
             : item
         )
       );
