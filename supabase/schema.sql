@@ -82,6 +82,38 @@ create table if not exists public.tmc_categories (
   created_at timestamptz not null default now()
 );
 
+-- Keep a stable baseline of categories in DB.
+insert into public.tmc_categories (id, name)
+values
+  ('cat-Стройматериалы', 'Стройматериалы'),
+  ('cat-Инструменты', 'Инструменты'),
+  ('cat-Запчасти', 'Запчасти'),
+  ('cat-ГСМ', 'ГСМ'),
+  ('cat-Электрика', 'Электрика'),
+  ('cat-Сантехника', 'Сантехника'),
+  ('cat-Спецодежда / СИЗ', 'Спецодежда / СИЗ'),
+  ('cat-Техника / Оборудование', 'Техника / Оборудование'),
+  ('cat-Расходники', 'Расходники'),
+  ('cat-Прочее', 'Прочее')
+on conflict (id) do nothing;
+
+create or replace function public.tmc_prevent_last_category_delete()
+returns trigger
+language plpgsql
+as $$
+begin
+  if (select count(*) from public.tmc_categories) <= 1 then
+    raise exception 'Cannot delete the last category';
+  end if;
+  return old;
+end;
+$$;
+
+drop trigger if exists trg_tmc_prevent_last_category_delete on public.tmc_categories;
+create trigger trg_tmc_prevent_last_category_delete
+before delete on public.tmc_categories
+for each row execute function public.tmc_prevent_last_category_delete();
+
 create table if not exists public.tmc_sessions (
   id text primary key,
   is_active boolean not null default false,
