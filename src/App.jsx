@@ -939,7 +939,7 @@ function WriteoffPage({ assets, saveAssets, session, syncAfterRpc, nav }) {
 }
 
 function AdminPanel(props) {
-  const { users, warehouses, assets, categories, saveUsers, saveWarehouses, saveCategories } = props;
+  const { users, warehouses, assets, categories, createUser, updateUser, deleteUser, hasSupabaseConfig, saveWarehouses, saveCategories } = props;
   const [tab, setTab] = useState("whs");
   return (
     <div>
