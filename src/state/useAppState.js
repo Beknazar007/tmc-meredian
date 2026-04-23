@@ -87,14 +87,32 @@ export function useAppState(defaults) {
       }
 
       try {
-        const cloud = await loadCloudState();
+        const [cloud, authSession] = await Promise.all([
+          loadCloudState(),
+          getSupabaseSession().catch(() => null),
+        ]);
         if (!alive) return;
-        setUsers(cloud.users || []);
+        const nextUsers = cloud.users || [];
+        setUsers(nextUsers);
         setWarehouses(cloud.warehouses || []);
         setAssets(cloud.assets || []);
         setTransfers(cloud.transfers || []);
         setCategories(cloud.categories?.length ? cloud.categories : defaults.categories || []);
-        setSession(cloud.session || null);
+
+        // Restore session from Supabase Auth BEFORE flipping `ready` so the UI
+        // never briefly renders the Login page for logged-in users.
+        if (authSession?.user) {
+          const authId = authSession.user.id;
+          const authEmail = (authSession.user.email || "").toLowerCase();
+          const matchedUser = nextUsers.find(
+            (user) =>
+              user.authUserId === authId ||
+              (user.login && user.login.toLowerCase() === authEmail)
+          );
+          setSession(matchedUser ? { user: matchedUser } : null);
+        } else {
+          setSession(null);
+        }
       } catch (error) {
         console.warn("Cloud state load failed:", error?.message || error);
         if (!alive) return;
