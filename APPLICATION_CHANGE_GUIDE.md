@@ -187,9 +187,9 @@ The transfer process is the core lifecycle event for an asset. Every transfer ha
 1. **Request** — source warehouse responsible (or admin) initiates transfer from `AssetDetail` via "Передать ТМЦ".
    - RPC: `tmc_request_transfer`.
    - Effect: transfer row created with `status='pending'`; source asset has its `qty` deducted (or, for single-unit assets, status set to `В пути`).
-2. **Confirm / Reject** — **only** the user named in `tmc_transfers.to_responsible_id` (or an admin) can act. The UI hides the Подтвердить/Отклонить buttons for anyone else, and both RPCs enforce the same check server-side via `auth.uid()` → `tmc_users.auth_user_id`.
-   - Confirm → RPC `tmc_confirm_transfer`. Asset is actually moved/merged to the destination warehouse.
-   - Reject → RPC `tmc_reject_transfer`. UI prompts for a reason via `window.prompt`; the reason is **required** and is stored in `tmc_transfers.reject_reason`. Source asset is restored.
+2. **Confirm / Reject** — **only** the user named in `tmc_transfers.to_responsible_id` can act. Admins are observers only: they see the transfer but have no Подтвердить/Отклонить buttons. Both RPCs enforce the same rule server-side via `auth.uid()` → `tmc_users.auth_user_id`; admins calling the RPC directly are rejected with "Администратор только наблюдает."
+   - Confirm → RPC `tmc_confirm_transfer`. Asset is actually moved/merged to the destination warehouse. UI shows a `window.confirm` asking "Подтвердить получение ...?" before invoking the RPC.
+   - Reject → RPC `tmc_reject_transfer`. UI first prompts for a reason via `window.prompt`, then shows a second `window.confirm` summarizing the transfer and reason. The reason is **required** and is stored in `tmc_transfers.reject_reason`. Source asset is restored.
    - When creating a transfer, the «Ответственный получателя» dropdown lists only users that appear in `tmc_warehouses.responsible_ids` of the destination warehouse — you cannot route a transfer to someone who isn't responsible there.
 3. **Act** — available at all three stages. Button `Акт` navigates to the `waybill` page (`WaybillPage` in `App.jsx`).
 

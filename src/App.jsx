@@ -302,6 +302,8 @@ export default function App() {
   const isAdmin = session.user.role === "admin";
   const myWHid = session.user.warehouseId;
   const myUserId = session.user.id;
+  // Admins see all pending transfers for monitoring (read-only), users see
+  // only transfers addressed to them personally.
   const incoming = transfers.filter((t) => t.status === "pending" && (isAdmin || t.toResponsibleId === myUserId));
   const pendingWO = assets.filter((a) => a.status === "На списание");
   const lowStock = assets.filter((a) => a.qty !== undefined && a.minQty > 0 && a.qty <= a.minQty && a.status !== "Списан");
@@ -658,6 +660,11 @@ function AssetDetail(props) {
 
   const confirmIncoming = async () => {
     if (!pendingTransfer) return;
+    const qtyLabel = pendingTransfer.qty ? qtyStr(pendingTransfer.qty, pendingTransfer.unit) : "1 шт";
+    const ok = window.confirm(
+      `Подтвердить получение «${pendingTransfer.assetName}» (${qtyLabel}) от ${pendingTransfer.fromWhName || "—"}?\n\nПосле подтверждения ТМЦ будет перенесён на ваш склад.`
+    );
+    if (!ok) return;
     if (hasSupabaseConfig) {
       await syncAfterRpc(() => rpcConfirmTransfer(pendingTransfer.id, session.user.name));
       return;
@@ -669,6 +676,10 @@ function AssetDetail(props) {
     if (!pendingTransfer) return;
     const reason = (window.prompt("Укажите причину отклонения:") || "").trim();
     if (!reason) return;
+    const ok = window.confirm(
+      `Отклонить передачу «${pendingTransfer.assetName}»?\n\nПричина: ${reason}\n\nТМЦ вернётся на склад отправителя.`
+    );
+    if (!ok) return;
     if (hasSupabaseConfig) {
       await syncAfterRpc(() => rpcRejectTransfer(pendingTransfer.id, session.user.name, reason));
       return;
@@ -696,25 +707,52 @@ function AssetDetail(props) {
             </div>
           </Card>
 
-          {pendingTransfer && (isAdmin || pendingTransfer.toResponsibleId === session.user.id) && (
-            <Card style={{ borderColor: "#8b5cf6" }}>
-              <SectionTitle>Входящая передача</SectionTitle>
-              <Muted>
-                {pendingTransfer.no} · От: {pendingTransfer.fromWhName} · {fmt(pendingTransfer.createdAt)}
-              </Muted>
-              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-                <button style={buttonStyle("#8b5cf6")} onClick={() => nav("waybill", { transferId: pendingTransfer.id })}>
-                  Акт
-                </button>
-                <button style={buttonStyle(COLORS.accent)} onClick={confirmIncoming}>
-                  Подтвердить
-                </button>
-                <button style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })} onClick={rejectIncoming}>
-                  Отклонить
-                </button>
-              </div>
-            </Card>
-          )}
+          {pendingTransfer && (() => {
+            const canAct = pendingTransfer.toResponsibleId === session.user.id;
+            if (!canAct && !isAdmin) return null;
+            const recipientName =
+              users.find((u) => u.id === pendingTransfer.toResponsibleId)?.name ||
+              pendingTransfer.toResponsibleName ||
+              "—";
+            return (
+              <Card style={{ borderColor: "#8b5cf6" }}>
+                <SectionTitle>Входящая передача</SectionTitle>
+                <Muted>
+                  {pendingTransfer.no} · От: {pendingTransfer.fromWhName} · {fmt(pendingTransfer.createdAt)}
+                </Muted>
+                {!canAct && isAdmin && (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      padding: "8px 12px",
+                      borderRadius: 8,
+                      background: "#1f2937",
+                      border: `1px solid ${COLORS.border}`,
+                      color: COLORS.muted,
+                      fontSize: 13,
+                    }}
+                  >
+                    Мониторинг: подтвердить или отклонить может только ответственный получатель — {recipientName}.
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                  <button style={buttonStyle("#8b5cf6")} onClick={() => nav("waybill", { transferId: pendingTransfer.id })}>
+                    Акт
+                  </button>
+                  {canAct && (
+                    <>
+                      <button style={buttonStyle(COLORS.accent)} onClick={confirmIncoming}>
+                        Подтвердить
+                      </button>
+                      <button style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })} onClick={rejectIncoming}>
+                        Отклонить
+                      </button>
+                    </>
+                  )}
+                </div>
+              </Card>
+            );
+          })()}
         </div>
 
         <div style={{ display: "grid", gap: 16 }}>
@@ -916,56 +954,92 @@ function AssetDetail(props) {
 
 function IncomingPage({ transfers, assets, saveAssets, saveTransfers, isAdmin, myWHid, session, syncAfterRpc, nav }) {
   const list = transfers.filter((item) => item.status === "pending" && (isAdmin || item.toResponsibleId === session.user.id));
+
+  const onConfirm = async (transfer) => {
+    const qtyLabel = transfer.qty ? qtyStr(transfer.qty, transfer.unit) : "1 шт";
+    const ok = window.confirm(
+      `Подтвердить получение «${transfer.assetName}» (${qtyLabel}) от ${transfer.fromWhName || "—"}?\n\nПосле подтверждения ТМЦ будет перенесён на ваш склад.`
+    );
+    if (!ok) return;
+    if (hasSupabaseConfig) {
+      await syncAfterRpc(() => rpcConfirmTransfer(transfer.id, session.user.name));
+    } else {
+      confirmTransfer(transfer, assets, saveAssets, transfers, saveTransfers, session.user.name);
+    }
+  };
+
+  const onReject = async (transfer) => {
+    const reason = (window.prompt("Укажите причину отклонения:") || "").trim();
+    if (!reason) return;
+    const ok = window.confirm(
+      `Отклонить передачу «${transfer.assetName}»?\n\nПричина: ${reason}\n\nТМЦ вернётся на склад отправителя.`
+    );
+    if (!ok) return;
+    if (hasSupabaseConfig) {
+      await syncAfterRpc(() => rpcRejectTransfer(transfer.id, session.user.name, reason));
+    } else {
+      rejectTransfer(transfer, assets, saveAssets, transfers, saveTransfers, session.user.name, reason);
+    }
+  };
+
   return (
     <div>
       <Tag>ПЕРЕДАЧИ</Tag>
       <H1>Входящие</H1>
+      {isAdmin && list.length > 0 && (
+        <div
+          style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            background: "#1f2937",
+            border: `1px solid ${COLORS.border}`,
+            color: COLORS.muted,
+            fontSize: 13,
+            marginBottom: 12,
+          }}
+        >
+          Режим мониторинга: подтверждать и отклонять передачи может только указанный получатель.
+        </div>
+      )}
       <div style={{ display: "grid", gap: 12 }}>
-        {list.map((transfer) => (
-          <Card key={transfer.id} style={{ borderColor: "#8b5cf6" }}>
-            <Row>
-              <div>
-                <div style={{ fontWeight: 700 }}>{transfer.assetName}</div>
-                <Muted>{transfer.assetId} · {transfer.no}</Muted>
+        {list.map((transfer) => {
+          const canAct = transfer.toResponsibleId === session.user.id;
+          return (
+            <Card key={transfer.id} style={{ borderColor: "#8b5cf6" }}>
+              <Row>
+                <div>
+                  <div style={{ fontWeight: 700 }}>{transfer.assetName}</div>
+                  <Muted>{transfer.assetId} · {transfer.no}</Muted>
+                </div>
+                <Chip color="#8b5cf6">{transfer.qty ? qtyStr(transfer.qty, transfer.unit) : "1 шт"}</Chip>
+              </Row>
+              <div style={{ display: "grid", gap: 6, marginTop: 12 }}>
+                <InfoLine label="Откуда" value={transfer.fromWhName} />
+                <InfoLine label="Куда" value={transfer.toWhName} />
+                <InfoLine label="Отправил" value={transfer.createdBy} />
+                <InfoLine label="Получатель" value={transfer.toResponsibleName || "—"} />
+                <InfoLine label="Дата" value={fmt(transfer.createdAt)} />
+                <InfoLine label="Примечание" value={transfer.notes || "—"} />
               </div>
-              <Chip color="#8b5cf6">{transfer.qty ? qtyStr(transfer.qty, transfer.unit) : "1 шт"}</Chip>
-            </Row>
-            <div style={{ display: "grid", gap: 6, marginTop: 12 }}>
-              <InfoLine label="Откуда" value={transfer.fromWhName} />
-              <InfoLine label="Куда" value={transfer.toWhName} />
-              <InfoLine label="Отправил" value={transfer.createdBy} />
-              <InfoLine label="Дата" value={fmt(transfer.createdAt)} />
-              <InfoLine label="Примечание" value={transfer.notes || "—"} />
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-              <button style={buttonStyle("#8b5cf6")} onClick={() => nav("waybill", { transferId: transfer.id })}>Акт</button>
-              <button
-                style={buttonStyle(COLORS.accent)}
-                onClick={() =>
-                  hasSupabaseConfig
-                    ? syncAfterRpc(() => rpcConfirmTransfer(transfer.id, session.user.name))
-                    : confirmTransfer(transfer, assets, saveAssets, transfers, saveTransfers, session.user.name)
-                }
-              >
-                Подтвердить
-              </button>
-              <button
-                style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })}
-                onClick={async () => {
-                  const reason = (window.prompt("Укажите причину отклонения:") || "").trim();
-                  if (!reason) return;
-                  if (hasSupabaseConfig) {
-                    await syncAfterRpc(() => rpcRejectTransfer(transfer.id, session.user.name, reason));
-                  } else {
-                    rejectTransfer(transfer, assets, saveAssets, transfers, saveTransfers, session.user.name, reason);
-                  }
-                }}
-              >
-                Отклонить
-              </button>
-            </div>
-          </Card>
-        ))}
+              <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+                <button style={buttonStyle("#8b5cf6")} onClick={() => nav("waybill", { transferId: transfer.id })}>Акт</button>
+                {canAct && (
+                  <>
+                    <button style={buttonStyle(COLORS.accent)} onClick={() => onConfirm(transfer)}>
+                      Подтвердить
+                    </button>
+                    <button
+                      style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })}
+                      onClick={() => onReject(transfer)}
+                    >
+                      Отклонить
+                    </button>
+                  </>
+                )}
+              </div>
+            </Card>
+          );
+        })}
       </div>
       {list.length === 0 && <Empty text="Нет входящих передач" />}
     </div>

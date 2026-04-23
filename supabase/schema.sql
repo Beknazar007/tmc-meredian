@@ -502,8 +502,8 @@ begin
 
   if auth.uid() is not null then
     select * into caller from public.tmc_users where auth_user_id = auth.uid() limit 1;
-    if caller.id is null or (caller.role <> 'admin' and caller.id <> tr.to_responsible_id) then
-      raise exception 'Подтвердить передачу может только назначенный получатель или администратор.';
+    if caller.id is null or caller.id <> tr.to_responsible_id then
+      raise exception 'Подтвердить передачу может только назначенный получатель. Администратор только наблюдает.';
     end if;
   end if;
 
@@ -631,8 +631,8 @@ begin
 
   if auth.uid() is not null then
     select * into caller from public.tmc_users where auth_user_id = auth.uid() limit 1;
-    if caller.id is null or (caller.role <> 'admin' and caller.id <> tr.to_responsible_id) then
-      raise exception 'Отклонить передачу может только назначенный получатель или администратор.';
+    if caller.id is null or caller.id <> tr.to_responsible_id then
+      raise exception 'Отклонить передачу может только назначенный получатель. Администратор только наблюдает.';
     end if;
   end if;
 
