@@ -377,9 +377,12 @@ function WarehouseView(props) {
       return searchOk && statusOk;
     });
 
-  const addAsset = (asset) => {
-    saveAssets([...assets, asset]);
-    setShowAdd(false);
+  const addAsset = async (asset) => {
+    const ok = await saveAssets([...assets, asset]);
+    if (ok) {
+      setShowAdd(false);
+    }
+    return ok;
   };
 
   const pendingOutgoing = transfers.filter((item) => item.status === "pending" && item.fromWhId === warehouse.id);
@@ -1207,6 +1210,7 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
     qty: "",
     minQty: "",
   });
+  const [saving, setSaving] = useState(false);
   const fileRef = useRef(null);
   const warehouse = warehouses.find((item) => item.id === warehouseId);
   const responsibleIds = warehouse?.responsibleIds || [];
@@ -1220,7 +1224,7 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
     reader.readAsDataURL(file);
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (!form.name.trim()) return alert("Введите название");
     if (!form.category) return alert("Выберите категорию");
     const qty = form.qty === "" ? undefined : Number(form.qty);
@@ -1248,7 +1252,12 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
         },
       ],
     };
-    onSave(newAsset);
+    setSaving(true);
+    try {
+      await onSave(newAsset);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -1293,8 +1302,8 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
         <Field label="Серийный / инвентарный №"><input style={inputStyle} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} /></Field>
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <button style={{ ...buttonStyle(COLORS.accent), flex: 1 }} onClick={submit}>Сохранить</button>
-        <button style={{ ...buttonStyle("transparent", { border: `1px solid ${COLORS.border}` }), flex: 1 }} onClick={onCancel}>Отмена</button>
+        <button style={{ ...buttonStyle(COLORS.accent), flex: 1 }} onClick={submit} disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</button>
+        <button style={{ ...buttonStyle("transparent", { border: `1px solid ${COLORS.border}` }), flex: 1 }} onClick={onCancel} disabled={saving}>Отмена</button>
       </div>
     </div>
   );

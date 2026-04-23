@@ -90,6 +90,7 @@ export function useAppState(defaults) {
   const saveUsers = async (value) => {
     const ok = await runCloudWrite(() => saveUsersCloud(value));
     if (ok) setUsers(value);
+    return ok;
   };
 
   const createUser = async (user) => {
@@ -128,26 +129,30 @@ export function useAppState(defaults) {
   const saveWarehouses = async (value) => {
     const ok = await runCloudWrite(() => saveWarehousesCloud(value));
     if (ok) setWarehouses(value);
+    return ok;
   };
 
   const saveAssets = async (value) => {
     const ok = await runCloudWrite(() => saveAssetsCloud(value));
     if (ok) setAssets(value);
+    return ok;
   };
 
   const saveTransfers = async (value) => {
     const ok = await runCloudWrite(() => saveTransfersCloud(value));
     if (ok) setTransfers(value);
+    return ok;
   };
 
   const saveCategories = async (value) => {
     const ok = await runCloudWrite(() => saveCategoriesCloud(value));
     if (ok) setCategories(value);
+    return ok;
   };
 
   const saveSession = async (value) => {
     setSession(value);
-    await runCloudWrite(() => saveSessionCloud(value), { requiresAuth: false });
+    return runCloudWrite(() => saveSessionCloud(value), { requiresAuth: false });
   };
 
   const hydrateFromCloud = (cloud) => {
