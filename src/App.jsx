@@ -16,6 +16,8 @@ import { Login } from "./features/auth/Login";
 import { Topbar } from "./features/layout/Topbar";
 
 const UNITS = ["шт", "л", "кг", "т", "м", "м²", "м³", "уп", "рул", "компл", "пара", "box"];
+/** Валюта для цен в интерфейсе и экспорте (KGS). */
+const CURRENCY = "сом";
 const DEFAULT_CATEGORIES = [
   "Стройматериалы",
   "Инструменты",
@@ -786,7 +788,7 @@ function AssetDetail(props) {
               <InfoLine label="Ответственный" value={responsible?.name} />
               <InfoLine label="Категория" value={asset.category} />
               <InfoLine label="Поставщик" value={asset.supplier} />
-              <InfoLine label="Цена" value={asset.price ? `${asset.price} ₸` : "—"} />
+              <InfoLine label="Цена" value={asset.price ? `${asset.price} ${CURRENCY}` : "—"} />
               <InfoLine label="Дата закупки" value={fmtD(asset.purchaseDate || asset.createdAt)} />
               <InfoLine label="Серийный №" value={asset.notes} />
               <InfoLine label="Количество" value={hasQty ? `${asset.qty} ${asset.unit || "шт"}` : "—"} />
@@ -1799,7 +1801,7 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
           <input style={inputStyle} type="number" min="0" step="0.01" value={form.minQty} onChange={(e) => setForm((p) => ({ ...p, minQty: e.target.value }))} placeholder="0" />
         </Field>
         <Field label="Поставщик *"><input style={inputStyle} value={form.supplier} onChange={(e) => setForm((p) => ({ ...p, supplier: e.target.value }))} /></Field>
-        <Field label="Цена (₸) *"><input style={inputStyle} type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm((p) => ({ ...p, price: e.target.value }))} placeholder="0" /></Field>
+        <Field label={`Цена (${CURRENCY}) *`}><input style={inputStyle} type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm((p) => ({ ...p, price: e.target.value }))} placeholder="0" /></Field>
         <Field label="Дата закупки *"><input style={inputStyle} type="date" value={form.purchaseDate} onChange={(e) => setForm((p) => ({ ...p, purchaseDate: e.target.value }))} /></Field>
         <Field label="Ответственный *">
           <select style={inputStyle} value={form.responsibleId} onChange={(e) => setForm((p) => ({ ...p, responsibleId: e.target.value }))}>
@@ -1888,8 +1890,8 @@ function ExportPage({ assets, transfers, warehouses, users }) {
           Ответственный: userName(asset.responsibleId),
           Количество: asset.qty ?? 1,
           "Ед. изм.": asset.unit || "шт",
-          Цена: Number(asset.price) || 0,
-          Сумма: (asset.qty ?? 1) * (Number(asset.price) || 0),
+          [`Цена (${CURRENCY})`]: Number(asset.price) || 0,
+          [`Сумма (${CURRENCY})`]: (asset.qty ?? 1) * (Number(asset.price) || 0),
           "Дата закупки": fmtD(asset.purchaseDate || asset.createdAt),
           Статус: asset.status,
         })),
