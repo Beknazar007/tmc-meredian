@@ -36,12 +36,16 @@ function extractErrorMessage(error) {
     error?.details ||
     error?.hint ||
     (typeof error === "string" ? error : "");
-  const text = String(raw || "").trim();
+  let text = String(raw || "").trim().replace(/^ERROR:\s*/i, "");
   if (!text) return "";
-  // Server-side guards raise messages that start with "Нельзя..." or are
-  // already human-readable; pass those through. Strip Postgres prefixes
-  // like "ERROR:  ..." that Supabase sometimes leaves in.
-  return text.replace(/^ERROR:\s*/i, "");
+  // Raw Postgres (often when empty string hits a numeric/date column)
+  if (/invalid input syntax for type (numeric|integer|bigint|double precision)/i.test(text)) {
+    return "Предупреждение: не все обязательные поля заполнены. Укажите цену, количество и мин. остаток числами (для нулевой цены введите 0), без пустых ячеек.";
+  }
+  if (/invalid input syntax for type date/i.test(text) || /date\/time field value out of range/i.test(text)) {
+    return "Предупреждение: проверьте дату в поле «дата закупки» — укажите корректную дату.";
+  }
+  return text;
 }
 
 async function runCloudWrite(fn, options = {}) {
