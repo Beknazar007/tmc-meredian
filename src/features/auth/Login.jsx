@@ -13,7 +13,7 @@ export function Login({ onLogin, hasSupabaseConfig, Field, inputStyle, buttonSty
       return;
     }
     if (!login.trim() || !password) {
-      setError("Введите логин (или email) и пароль");
+      setError("Введите логин и пароль");
       return;
     }
     try {
@@ -32,7 +32,7 @@ export function Login({ onLogin, hasSupabaseConfig, Field, inputStyle, buttonSty
         <Tag>АВТОРИЗАЦИЯ</Tag>
         <H1>Вход</H1>
         {error && <ErrBox>{error}</ErrBox>}
-        <Field label="Логин или Email">
+        <Field label="Логин">
           <input style={inputStyle} value={login} onChange={(e) => setLogin(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
         </Field>
         <Field label="Пароль">
@@ -43,7 +43,7 @@ export function Login({ onLogin, hasSupabaseConfig, Field, inputStyle, buttonSty
         </button>
         <div style={{ marginTop: 16, fontSize: 12, color: COLORS.muted, lineHeight: 1.6 }}>
           {hasSupabaseConfig
-            ? "Можно входить логином (admin/sklad1/sklad2). Приложение авторизует через Supabase email вида <login>@tmc.local."
+            ? "Вход по латинскому логину (admin, sklad1, …) или, при необходимости, по полному email. Короткий логин в Supabase — это <login>@tmc.local."
             : "Supabase не настроен: cloud-only вход отключен. Добавьте env переменные в Render."}
         </div>
       </div>

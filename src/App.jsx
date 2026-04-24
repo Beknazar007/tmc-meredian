@@ -113,7 +113,7 @@ export default function App() {
     }
     const normalizedLogin = loginValue.trim().toLowerCase();
     if (!normalizedLogin || !password) {
-      throw new Error("Введите логин (или email) и пароль.");
+      throw new Error("Введите логин и пароль.");
     }
 
     const emailCandidates = normalizedLogin.includes("@")
@@ -1442,7 +1442,7 @@ function WarehouseAdmin({ warehouses, users, assets, saveWarehouses }) {
   );
 }
 
-/** Short login becomes name@tmc.local — Supabase Auth accepts only ASCII in that local part. */
+/** Latin login (no @) is stored for Auth as name@tmc.local. Full email with @ is optional. ASCII only in short form. */
 function isValidAuthLoginField(raw) {
   const t = String(raw || "").trim();
   if (!t) return false;
@@ -1493,7 +1493,7 @@ function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, upda
     if (!form.name.trim() || !form.login.trim()) return;
     if (!isValidAuthLoginField(form.login)) {
       alert(
-        "Поле «Email / логин» указано неверно. Введите полный email (например user@company.com) или латинский логин (ivan) — в системе он станет ivan@tmc.local. Кириллица в коротком логине не поддерживается."
+        "Поле «Логин для входа» указано неверно. Нужен латинский логин (например ivan) — в системе он станет ivan@tmc.local. Полный email (user@company.com) можно указать по желанию. Кириллица в коротком логине не поддерживается."
       );
       return;
     }
@@ -1572,21 +1572,21 @@ function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, upda
               placeholder="Например: Кудайбердиев Бекбол"
             />
           </Field>
-          <Field label="Email / логин для входа">
+          <Field label="Логин для входа">
             <input
               type="text"
               name="ua_login"
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              inputMode="email"
+              inputMode="text"
               style={inputStyle}
               value={form.login}
               onChange={(e) => setForm((p) => ({ ...p, login: e.target.value }))}
-              placeholder="user@company.com или short-login (латиница)"
+              placeholder="например ivan_petrov"
             />
             <Muted style={{ marginTop: 4 }}>
-              Полный email (user@домен.com) или латинский логин. Без @ логин сохраняется как name@tmc.local — только латиница, цифры, . _ -
+              Укажите латинский логин (буквы, цифры, . _ -). Email не обязателен; при необходимости введите полный адрес (user@домен.com). Короткий логин для входа в Auth используется как login@tmc.local.
             </Muted>
           </Field>
           <Field label={editId ? "Пароль" : "Пароль *"}>
