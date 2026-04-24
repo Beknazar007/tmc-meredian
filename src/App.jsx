@@ -1530,6 +1530,12 @@ function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, upda
       }
       const ok2 = await (form.role === "admin" ? setUserWarehouseAccess(userId, []) : setUserWarehouseAccess(userId, warehouseIds));
       if (!ok2) return; /* runCloudWrite уже показал ошибку; профиль в БД мог быть создан — проверьте в списке */
+      const displayName = form.name.trim();
+      if (editId) {
+        alert(`Изменения для пользователя «${displayName}» сохранены.`);
+      } else {
+        alert(`Пользователь «${displayName}» успешно добавлен. Теперь он может войти в систему.`);
+      }
       reset();
     } finally {
       setSaving(false);
