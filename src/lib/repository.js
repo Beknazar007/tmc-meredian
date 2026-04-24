@@ -11,11 +11,13 @@ const TABLES = {
 const STORAGE_BUCKET = "asset-photos";
 const MIGRATION_FLAG = "tmc_cloud_migrated_v1";
 
+const GENERIC_EDGE_FN_MSG = /edge function returned a non-2xx status code/i;
+
 /**
- * When `functions.invoke` returns a non-2xx response, the useful message is often
- * in the parsed JSON body (`data.error`) rather than the generic HTTP error.
+ * On HTTP 4xx/5xx, Supabase often sets `data` to null; the real `{ error: "..." }` is only
+ * readable from `error.context` (Response). See: supabase.com/docs/guides/functions/error-handling
  */
-function errorFromFunctionInvoke(data, error) {
+async function detailFromFunctionsInvokeError(data, error) {
   if (!error) return "";
   if (data && typeof data === "object" && data.error != null) {
     return String(data.error);
@@ -30,7 +32,32 @@ function errorFromFunctionInvoke(data, error) {
       // ignore
     }
   }
-  return String(error.message || error);
+  const ctx = error?.context;
+  if (ctx && typeof ctx.text === "function") {
+    try {
+      const raw = await ctx.text();
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object" && parsed.error != null) {
+            return String(parsed.error);
+          }
+        } catch {
+          return raw.trim();
+        }
+      }
+    } catch {
+      // context may be unusable
+    }
+  }
+  const m = String(error.message || "").trim();
+  if (m && !GENERIC_EDGE_FN_MSG.test(m)) {
+    return m;
+  }
+  if (GENERIC_EDGE_FN_MSG.test(m) || !m) {
+    return "Сервер отклонил запрос (Edge Function). Часто это: логин/email уже занят, пароль короче 6 символов, нет прав администратора, или не задеплоена функция. Откройте логи «create-user» в Supabase, если проблема повторяется.";
+  }
+  return m;
 }
 
 /**
@@ -429,7 +456,7 @@ export async function createUser(user) {
     },
   });
   if (error) {
-    const msg = errorFromFunctionInvoke(data, error);
+    const msg = await detailFromFunctionsInvokeError(data, error);
     throw new Error(msg || "Не удалось вызвать create-user.");
   }
   if (!data?.user) {
@@ -452,7 +479,7 @@ export async function deleteUser(userId) {
     body: { userId },
   });
   if (error) {
-    const msg = errorFromFunctionInvoke(data, error);
+    const msg = await detailFromFunctionsInvokeError(data, error);
     throw new Error(msg || "Не удалось вызвать delete-user.");
   }
   if (data?.error) throw new Error(data.error);
@@ -465,7 +492,7 @@ export async function resetUserPassword(userId, password) {
     body: { userId, password },
   });
   if (error) {
-    const msg = errorFromFunctionInvoke(data, error);
+    const msg = await detailFromFunctionsInvokeError(data, error);
     throw new Error(msg || "Не удалось вызвать reset-password.");
   }
   if (data?.error) throw new Error(data.error);
@@ -481,7 +508,7 @@ export async function updateUserRole({ userId, role, warehouseId, name }) {
     body,
   });
   if (error) {
-    const msg = errorFromFunctionInvoke(data, error);
+    const msg = await detailFromFunctionsInvokeError(data, error);
     throw new Error(msg || "Не удалось вызвать update-user-role.");
   }
   if (data?.error) throw new Error(data.error);

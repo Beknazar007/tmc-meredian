@@ -37,7 +37,15 @@ function extractErrorMessage(error) {
     error?.hint ||
     (typeof error === "string" ? error : "");
   let text = String(raw || "").trim().replace(/^ERROR:\s*/i, "");
-  if (!text) return "";
+  if (!text) {
+    if (error && typeof error === "object" && (error.name === "FunctionsHttpError" || /FunctionsHttpError|FunctionsFetchError|FunctionsRelayError/.test(String(error.name)))) {
+      return "Ошибка вызова Edge Function. Проверьте сеть, деплой функции в Supabase и настройки проекта; подробности — в логах Edge Functions.";
+    }
+    return "";
+  }
+  if (/edge function returned a non-2xx status code/i.test(text)) {
+    return "Сервер отклонил запрос (Edge Function). Часто: email уже зарегистрирован, пароль меньше 6 символов, нет прав администратора. Подробности — в логах create-user в Supabase.";
+  }
   // Raw Postgres (often when empty string hits a numeric/date column)
   if (/invalid input syntax for type (numeric|integer|bigint|double precision)/i.test(text)) {
     return "Предупреждение: не все обязательные поля заполнены. Укажите цену, количество и мин. остаток числами (для нулевой цены введите 0), без пустых ячеек.";
