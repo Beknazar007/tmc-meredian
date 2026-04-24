@@ -1672,14 +1672,64 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
   };
 
   const submit = async () => {
-    if (!form.name.trim()) return alert("Введите название");
-    if (!form.category) return alert("Выберите категорию");
-    const qty = form.qty === "" ? undefined : Number(form.qty);
-    const minQty = form.minQty === "" ? 0 : Number(form.minQty);
+    const warnFillAll =
+      "Предупреждение: заполните все обязательные поля. Нужны название, категория, количество, поставщик, цена (числом, при отсутствии укажите 0), дата закупки и ответственный. Мин. остаток можно оставить пустым — будет 0.";
+
+    if (!form.name.trim()) {
+      alert("Введите название");
+      return;
+    }
+    if (!form.category) {
+      alert("Выберите категорию");
+      return;
+    }
+    if (form.qty === "" || String(form.qty).trim() === "") {
+      alert(warnFillAll);
+      return;
+    }
+    const qty = Number(String(form.qty).replace(",", "."));
+    if (Number.isNaN(qty) || qty < 0) {
+      alert(warnFillAll);
+      return;
+    }
+    const minQty = form.minQty === "" || String(form.minQty).trim() === "" ? 0 : Number(String(form.minQty).replace(",", "."));
+    if (Number.isNaN(minQty) || minQty < 0) {
+      alert(warnFillAll);
+      return;
+    }
+    if (!form.supplier.trim()) {
+      alert(warnFillAll);
+      return;
+    }
+    if (form.price === "" || String(form.price).trim() === "") {
+      alert(warnFillAll);
+      return;
+    }
+    const price = Number(String(form.price).replace(",", "."));
+    if (Number.isNaN(price) || price < 0) {
+      alert(warnFillAll);
+      return;
+    }
+    if (!form.purchaseDate) {
+      alert(warnFillAll);
+      return;
+    }
+    if (!form.responsibleId) {
+      alert(warnFillAll);
+      return;
+    }
+
     const newAsset = {
       id: `TMC-${uid().toUpperCase().slice(0, 8)}`,
-      ...form,
       name: form.name.trim(),
+      category: form.category,
+      supplier: form.supplier.trim(),
+      purchaseDate: form.purchaseDate,
+      price,
+      responsibleId: form.responsibleId,
+      notes: form.notes.trim(),
+      photo: form.photo,
+      unit: form.unit,
       qty,
       initialQty: qty,
       minQty,
@@ -1689,7 +1739,7 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
       history: [
         {
           date: nowISO(),
-          action: `Приход${qty !== undefined ? ` (${qtyStr(qty, form.unit)})` : ""}`,
+          action: `Приход (${qtyStr(qty, form.unit)})`,
           warehouseId,
           responsibleId: form.responsibleId,
           qty,
@@ -1736,7 +1786,7 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
           </select>
         </Field>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-          <Field label="Количество"><input style={inputStyle} type="number" min="0" step="0.01" value={form.qty} onChange={(e) => setForm((p) => ({ ...p, qty: e.target.value }))} /></Field>
+          <Field label="Количество *"><input style={inputStyle} type="number" min="0" step="0.01" value={form.qty} onChange={(e) => setForm((p) => ({ ...p, qty: e.target.value }))} /></Field>
           <Field label="Единица измерения">
             <select style={inputStyle} value={form.unit} onChange={(e) => setForm((p) => ({ ...p, unit: e.target.value }))}>
               {UNITS.map((unit) => (
@@ -1745,11 +1795,13 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
             </select>
           </Field>
         </div>
-        <Field label="Мин. остаток"><input style={inputStyle} type="number" min="0" step="0.01" value={form.minQty} onChange={(e) => setForm((p) => ({ ...p, minQty: e.target.value }))} /></Field>
-        <Field label="Поставщик"><input style={inputStyle} value={form.supplier} onChange={(e) => setForm((p) => ({ ...p, supplier: e.target.value }))} /></Field>
-        <Field label="Цена (₸)"><input style={inputStyle} type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm((p) => ({ ...p, price: e.target.value }))} /></Field>
-        <Field label="Дата закупки"><input style={inputStyle} type="date" value={form.purchaseDate} onChange={(e) => setForm((p) => ({ ...p, purchaseDate: e.target.value }))} /></Field>
-        <Field label="Ответственный">
+        <Field label="Мин. остаток">
+          <input style={inputStyle} type="number" min="0" step="0.01" value={form.minQty} onChange={(e) => setForm((p) => ({ ...p, minQty: e.target.value }))} placeholder="0" />
+        </Field>
+        <Field label="Поставщик *"><input style={inputStyle} value={form.supplier} onChange={(e) => setForm((p) => ({ ...p, supplier: e.target.value }))} /></Field>
+        <Field label="Цена (₸) *"><input style={inputStyle} type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm((p) => ({ ...p, price: e.target.value }))} placeholder="0" /></Field>
+        <Field label="Дата закупки *"><input style={inputStyle} type="date" value={form.purchaseDate} onChange={(e) => setForm((p) => ({ ...p, purchaseDate: e.target.value }))} /></Field>
+        <Field label="Ответственный *">
           <select style={inputStyle} value={form.responsibleId} onChange={(e) => setForm((p) => ({ ...p, responsibleId: e.target.value }))}>
             <option value="">— выберите —</option>
             {allowedUsers.map((user) => (

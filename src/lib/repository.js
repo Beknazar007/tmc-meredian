@@ -33,6 +33,26 @@ function errorFromFunctionInvoke(data, error) {
   return String(error.message || error);
 }
 
+/**
+ * Text inputs often yield `""`; Postgres `numeric` / `date` reject empty strings.
+ */
+function nullIfBlankNum(value) {
+  if (value === null || value === undefined) return null;
+  if (value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const t = String(value).trim();
+  if (t === "") return null;
+  const n = Number(t.replace(",", "."));
+  if (Number.isNaN(n) || !Number.isFinite(n)) return null;
+  return n;
+}
+
+function nullIfBlankDate(value) {
+  if (value === null || value === undefined) return null;
+  if (value === "") return null;
+  return value;
+}
+
 function nullableId(value) {
   if (value === undefined || value === null) return null;
   if (typeof value === "string" && value.trim() === "") return null;
@@ -108,24 +128,25 @@ function toTransferRow(transfer) {
 
 function toAssetRow(asset, photoOverride) {
   const photo = photoOverride ?? asset.photo ?? null;
+  const minRaw = nullIfBlankNum(asset.minQty ?? asset.min_qty);
   return {
     id: asset.id,
     name: asset.name,
     category: asset.category ?? null,
     supplier: asset.supplier ?? null,
-    purchase_date: asset.purchaseDate ?? asset.purchase_date ?? null,
-    price: asset.price ?? null,
+    purchase_date: nullIfBlankDate(asset.purchaseDate ?? asset.purchase_date),
+    price: nullIfBlankNum(asset.price),
     responsible_id: nullableId(asset.responsibleId ?? asset.responsible_id),
     notes: asset.notes ?? null,
     photo,
     unit: asset.unit ?? null,
-    qty: asset.qty ?? null,
-    min_qty: asset.minQty ?? asset.min_qty ?? 0,
-    initial_qty: asset.initialQty ?? asset.initial_qty ?? null,
+    qty: nullIfBlankNum(asset.qty),
+    min_qty: minRaw === null ? 0 : minRaw,
+    initial_qty: nullIfBlankNum(asset.initialQty ?? asset.initial_qty),
     warehouse_id: nullableId(asset.warehouseId ?? asset.warehouse_id),
     status: asset.status ?? "На складе",
     history: asset.history ?? [],
-    pending_woqty: asset.pendingWOqty ?? asset.pending_woqty ?? null,
+    pending_woqty: nullIfBlankNum(asset.pendingWOqty ?? asset.pending_woqty),
   };
 }
 
@@ -262,6 +283,11 @@ function fromAssetRow(a) {
     warehouseId: a.warehouse_id,
     responsibleId: a.responsible_id,
     purchaseDate: a.purchase_date || a.purchaseDate,
+    price: a.price,
+    minQty: a.min_qty ?? a.minQty,
+    initialQty: a.initial_qty ?? a.initialQty,
+    qty: a.qty,
+    pendingWOqty: a.pending_woqty ?? a.pendingWOqty,
   };
 }
 
