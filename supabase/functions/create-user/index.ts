@@ -88,6 +88,14 @@ Deno.serve(async (req) => {
     return json(400, { error: "Role must be admin or user." });
   }
 
+  // Short form becomes `login@tmc.local`; Supabase Auth requires ASCII in the local part.
+  if (!login.includes("@") && /[^\u0000-\u007F]/.test(login)) {
+    return json(400, {
+      error:
+        "Короткий логин не может содержать кириллицу. Укажите полный email (user@домен.com) или латинский логин (например ivan).",
+    });
+  }
+
   const email = asEmail(login);
   const { data: createdAuth, error: createAuthError } = await adminClient.auth.admin.createUser({
     email,

@@ -256,26 +256,14 @@ export function useAppState(defaults) {
   }, []);
 
   const createUser = useCallback(async (user) => {
-    try {
-      if (!hasSupabaseConfig) throw new Error("Supabase is not configured.");
-      const authSession = await getSupabaseSession();
-      if (!authSession?.user) throw new Error("Not authenticated in Supabase.");
+    return runCloudWrite(async () => {
       const createdUser = await createUserCloud(user);
       setUsers((prev) => [...prev, createdUser]);
-      return true;
-    } catch (error) {
-      console.error(error);
-      alert("Ошибка синхронизации с облаком. Операция не сохранена.");
-      return false;
-    }
+    });
   }, []);
 
   const updateUser = useCallback(async (userId, patch) => {
-    try {
-      if (!hasSupabaseConfig) throw new Error("Supabase is not configured.");
-      const authSession = await getSupabaseSession();
-      if (!authSession?.user) throw new Error("Not authenticated in Supabase.");
-
+    return runCloudWrite(async () => {
       if (patch && patch.password) {
         await resetUserPasswordCloud(userId, patch.password);
       }
@@ -302,27 +290,14 @@ export function useAppState(defaults) {
           item.id === userId ? { ...item, ...patch, password: patch?.password ? null : item.password } : item
         )
       );
-      return true;
-    } catch (error) {
-      console.error(error);
-      alert("Ошибка синхронизации с облаком. Операция не сохранена.");
-      return false;
-    }
+    });
   }, []);
 
   const resetUserPassword = useCallback(async (userId, password) => {
-    try {
-      if (!hasSupabaseConfig) throw new Error("Supabase is not configured.");
-      const authSession = await getSupabaseSession();
-      if (!authSession?.user) throw new Error("Not authenticated in Supabase.");
+    return runCloudWrite(async () => {
       await resetUserPasswordCloud(userId, password);
       setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, password: null } : u)));
-      return true;
-    } catch (error) {
-      console.error(error);
-      alert("Не удалось сбросить пароль.");
-      return false;
-    }
+    });
   }, []);
 
   const deleteUser = useCallback(async (userId) => {

@@ -1425,6 +1425,16 @@ function WarehouseAdmin({ warehouses, users, assets, saveWarehouses }) {
   );
 }
 
+/** Short login becomes name@tmc.local — Supabase Auth accepts only ASCII in that local part. */
+function isValidAuthLoginField(raw) {
+  const t = String(raw || "").trim();
+  if (!t) return false;
+  if (t.includes("@")) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t);
+  }
+  return /^[a-zA-Z0-9._-]+$/.test(t);
+}
+
 function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, resetUserPassword, deleteUser, hasSupabaseConfig }) {
   const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseIds: [] });
   const [editId, setEditId] = useState("");
@@ -1467,9 +1477,19 @@ function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, 
 
   const submit = async () => {
     if (!form.name.trim() || !form.login.trim()) return;
+    if (!isValidAuthLoginField(form.login)) {
+      alert(
+        "Поле «Email / логин» указано неверно. Введите полный email (например user@company.com) или латинский логин (ivan) — в системе он станет ivan@tmc.local. Кириллица в коротком логине не поддерживается."
+      );
+      return;
+    }
     const password = form.password.trim();
     if (!editId && !password) {
       alert("Для нового пользователя укажите пароль.");
+      return;
+    }
+    if ((!editId || password) && password && password.length < 6) {
+      alert("Пароль не короче 6 символов (так настроен Supabase).");
       return;
     }
     const warehouseIds = form.role === "admin" ? [] : form.warehouseIds;
@@ -1508,7 +1528,20 @@ function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, 
       <SectionTitle>Пользователи</SectionTitle>
       <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
         <Field label="ФИО"><input style={inputStyle} value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field>
-        <Field label="Email"><input style={inputStyle} value={form.login} onChange={(e) => setForm((p) => ({ ...p, login: e.target.value }))} /></Field>
+        <Field label="Email / логин для входа">
+          <input
+            type="text"
+            autoCapitalize="none"
+            autoCorrect="off"
+            inputMode="email"
+            style={inputStyle}
+            value={form.login}
+            onChange={(e) => setForm((p) => ({ ...p, login: e.target.value }))}
+          />
+          <Muted style={{ marginTop: 4 }}>
+            Полный email (user@домен.com) или латинский логин. Без @ логин сохраняется как name@tmc.local — только латиница, цифры, . _ -
+          </Muted>
+        </Field>
         <Field label={editId ? "Пароль (оставьте пустым, чтобы не менять)" : "Пароль *"}>
           <input type="password" style={inputStyle} value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
         </Field>

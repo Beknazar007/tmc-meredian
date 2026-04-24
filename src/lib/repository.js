@@ -11,6 +11,28 @@ const TABLES = {
 const STORAGE_BUCKET = "asset-photos";
 const MIGRATION_FLAG = "tmc_cloud_migrated_v1";
 
+/**
+ * When `functions.invoke` returns a non-2xx response, the useful message is often
+ * in the parsed JSON body (`data.error`) rather than the generic HTTP error.
+ */
+function errorFromFunctionInvoke(data, error) {
+  if (!error) return "";
+  if (data && typeof data === "object" && data.error != null) {
+    return String(data.error);
+  }
+  if (typeof data === "string" && data.trim()) {
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed && typeof parsed === "object" && parsed.error != null) {
+        return String(parsed.error);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return String(error.message || error);
+}
+
 function nullableId(value) {
   if (value === undefined || value === null) return null;
   if (typeof value === "string" && value.trim() === "") return null;
@@ -380,7 +402,10 @@ export async function createUser(user) {
       authUserId: user.authUserId || null,
     },
   });
-  if (error) throw error;
+  if (error) {
+    const msg = errorFromFunctionInvoke(data, error);
+    throw new Error(msg || "Не удалось вызвать create-user.");
+  }
   if (!data?.user) {
     throw new Error(data?.error || "Не удалось создать пользователя через Edge Function.");
   }
@@ -400,7 +425,10 @@ export async function deleteUser(userId) {
   const { data, error } = await supabase.functions.invoke("delete-user", {
     body: { userId },
   });
-  if (error) throw error;
+  if (error) {
+    const msg = errorFromFunctionInvoke(data, error);
+    throw new Error(msg || "Не удалось вызвать delete-user.");
+  }
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -410,7 +438,10 @@ export async function resetUserPassword(userId, password) {
   const { data, error } = await supabase.functions.invoke("reset-password", {
     body: { userId, password },
   });
-  if (error) throw error;
+  if (error) {
+    const msg = errorFromFunctionInvoke(data, error);
+    throw new Error(msg || "Не удалось вызвать reset-password.");
+  }
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -423,7 +454,10 @@ export async function updateUserRole({ userId, role, warehouseId, name }) {
   const { data, error } = await supabase.functions.invoke("update-user-role", {
     body,
   });
-  if (error) throw error;
+  if (error) {
+    const msg = errorFromFunctionInvoke(data, error);
+    throw new Error(msg || "Не удалось вызвать update-user-role.");
+  }
   if (data?.error) throw new Error(data.error);
   return data;
 }
