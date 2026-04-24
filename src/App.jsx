@@ -393,6 +393,7 @@ function WarehouseList({ warehouses, assets, users, isAdmin, myWHid, nav, lowSto
       <Grid>
         {visible.map((warehouse) => {
           const whAssets = assets.filter((item) => item.warehouseId === warehouse.id && item.status !== "Списан");
+          const whLow = lowStock.filter((item) => item.warehouseId === warehouse.id).length;
           const incoming = transfers.filter((t) => t.status === "pending" && t.toWhId === warehouse.id).length;
           const outgoing = transfers.filter((t) => t.status === "pending" && t.fromWhId === warehouse.id).length;
           const responsibles = users.filter((user) => (warehouse.responsibleIds || []).includes(user.id));
@@ -402,6 +403,7 @@ function WarehouseList({ warehouses, assets, users, isAdmin, myWHid, nav, lowSto
               <Muted>{responsibles.length ? responsibles.map((item) => item.name).join(", ") : "Ответственный не назначен"}</Muted>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
                 <Chip color={COLORS.accent}>{whAssets.length} позиций</Chip>
+                {whLow > 0 && <Chip color={COLORS.warn}>Мин. остаток: {whLow}</Chip>}
                 {incoming > 0 && <Chip color={COLORS.success}>{incoming} входящих</Chip>}
                 {outgoing > 0 && <Chip color="#8b5cf6">{outgoing} отправлено</Chip>}
               </div>
