@@ -16,7 +16,6 @@ import {
   updateUserRole as updateUserRoleCloud,
   saveUsers as saveUsersCloud,
   saveWarehouses as saveWarehousesCloud,
-  setUserWarehouseAccess as setUserWarehouseAccessCloud,
 } from "../lib/repository";
 import { getSupabaseSession, hasSupabaseConfig, supabase } from "../lib/supabase";
 
@@ -329,9 +328,27 @@ export function useAppState(defaults) {
     return ok;
   }, []);
 
+  /** No DB RPC required — merges responsibleIds on each warehouse and saveWarehouses (works with schema.sql as deployed). */
   const setUserWarehouseAccess = useCallback(async (userId, warehouseIds) => {
     return runCloudWrite(async () => {
-      await setUserWarehouseAccessCloud(userId, warehouseIds);
+      const prev = warehousesRef.current;
+      const idSet = new Set((warehouseIds || []).map((x) => String(x).trim()).filter(Boolean));
+      const next = prev.map((w) => {
+        const shouldInclude = idSet.has(w.id);
+        const currentIds = w.responsibleIds || [];
+        const contains = currentIds.includes(userId);
+        if (shouldInclude && !contains) {
+          return { ...w, responsibleIds: [...currentIds, userId] };
+        }
+        if (!shouldInclude && contains) {
+          return { ...w, responsibleIds: currentIds.filter((x) => x !== userId) };
+        }
+        return w;
+      });
+      const changed = next.some((w, i) => w !== prev[i]);
+      if (changed) {
+        await saveWarehousesCloud(next, prev);
+      }
       const [freshWh, freshUsers] = await Promise.all([loadWarehousesSlice(), loadUsersSlice()]);
       setWarehouses(freshWh);
       setUsers(freshUsers);

@@ -434,19 +434,6 @@ export async function migrateLocalToCloud(local) {
   localStorage.setItem(MIGRATION_FLAG, "1");
 }
 
-/**
- * Server-side: assign user ↔ warehouses in one transaction (replaces fragile multi-row client diff).
- */
-export async function setUserWarehouseAccess(userId, warehouseIds) {
-  assertConfiguredAndClient();
-  const ids = (warehouseIds || []).map((x) => String(x).trim()).filter(Boolean);
-  const { error } = await supabase.rpc("tmc_set_user_warehouse_access", {
-    p_user_id: String(userId),
-    p_warehouse_ids: ids,
-  });
-  if (error) throw error;
-}
-
 export async function saveUsers(nextList, prevList) {
   assertConfiguredAndClient();
   const nextRows = (nextList || []).map(toUserRow);
