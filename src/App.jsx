@@ -88,6 +88,7 @@ export default function App() {
     resetUserPassword,
     deleteUser,
     saveWarehouses,
+    setUserWarehouseAccess,
     saveAssets,
     saveTransfers,
     saveCategories,
@@ -326,6 +327,7 @@ export default function App() {
     deleteUser,
     hasSupabaseConfig,
     saveWarehouses,
+    setUserWarehouseAccess,
     saveAssets,
     saveTransfers,
     saveCategories,
@@ -1288,7 +1290,7 @@ function WriteoffPage({ assets, saveAssets, session, syncAfterRpc, nav }) {
 }
 
 function AdminPanel(props) {
-  const { users, warehouses, assets, categories, createUser, updateUser, resetUserPassword, deleteUser, hasSupabaseConfig, saveWarehouses, saveCategories } = props;
+  const { users, warehouses, assets, categories, createUser, updateUser, resetUserPassword, deleteUser, hasSupabaseConfig, saveWarehouses, setUserWarehouseAccess, saveCategories } = props;
   const [tab, setTab] = useState("whs");
   return (
     <div>
@@ -1306,7 +1308,18 @@ function AdminPanel(props) {
         ))}
       </div>
       {tab === "whs" && <WarehouseAdmin warehouses={warehouses} users={users} assets={assets} saveWarehouses={saveWarehouses} />}
-      {tab === "users" && <UserAdmin users={users} warehouses={warehouses} saveWarehouses={saveWarehouses} createUser={createUser} updateUser={updateUser} resetUserPassword={resetUserPassword} deleteUser={deleteUser} hasSupabaseConfig={hasSupabaseConfig} />}
+      {tab === "users" && (
+        <UserAdmin
+          users={users}
+          warehouses={warehouses}
+          setUserWarehouseAccess={setUserWarehouseAccess}
+          createUser={createUser}
+          updateUser={updateUser}
+          resetUserPassword={resetUserPassword}
+          deleteUser={deleteUser}
+          hasSupabaseConfig={hasSupabaseConfig}
+        />
+      )}
       {tab === "cats" && <CategoryAdmin categories={categories} saveCategories={saveCategories} />}
     </div>
   );
@@ -1437,7 +1450,7 @@ function isValidAuthLoginField(raw) {
   return /^[a-zA-Z0-9._-]+$/.test(t);
 }
 
-function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, resetUserPassword, deleteUser, hasSupabaseConfig }) {
+function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, updateUser, resetUserPassword, deleteUser, hasSupabaseConfig }) {
   const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseIds: [] });
   const [editId, setEditId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1458,24 +1471,6 @@ function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, 
         ? p.warehouseIds.filter((x) => x !== id)
         : [...p.warehouseIds, id],
     }));
-
-  const syncWarehousesForUser = async (userId, nextWarehouseIds) => {
-    const next = warehouses.map((w) => {
-      const shouldInclude = nextWarehouseIds.includes(w.id);
-      const currentIds = w.responsibleIds || [];
-      const contains = currentIds.includes(userId);
-      if (shouldInclude && !contains) {
-        return { ...w, responsibleIds: [...currentIds, userId] };
-      }
-      if (!shouldInclude && contains) {
-        return { ...w, responsibleIds: currentIds.filter((id) => id !== userId) };
-      }
-      return w;
-    });
-    const changed = next.some((w, i) => w !== warehouses[i]);
-    if (!changed) return true;
-    return saveWarehouses(next);
-  };
 
   const submit = async () => {
     if (!form.name.trim() || !form.login.trim()) return;
@@ -1516,10 +1511,8 @@ function UserAdmin({ users, warehouses, saveWarehouses, createUser, updateUser, 
         const ok = await createUser({ id: userId, ...payload });
         if (!ok) return;
       }
-      const ok2 = await syncWarehousesForUser(userId, warehouseIds);
-      if (!ok2) {
-        alert("Пользователь сохранён, но не удалось обновить привязки к складам.");
-      }
+      const ok2 = await (form.role === "admin" ? setUserWarehouseAccess(userId, []) : setUserWarehouseAccess(userId, warehouseIds));
+      if (!ok2) return; /* runCloudWrite уже показал ошибку; профиль в БД мог быть создан — проверьте в списке */
       reset();
     } finally {
       setSaving(false);

@@ -469,6 +469,72 @@ grant select, insert, update, delete on table
   public.tmc_asset_movements
 to authenticated;
 
+-- One atomic update: set which warehouses a user is responsible for (admin only).
+-- Avoids client-side diff bugs when several warehouses are updated at once.
+create or replace function public.tmc_set_user_warehouse_access(
+  p_user_id text,
+  p_warehouse_ids text[]
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  caller_role text;
+  wid text;
+begin
+  if auth.uid() is null then
+    raise exception 'Требуется вход в систему';
+  end if;
+
+  select u.role into caller_role
+  from public.tmc_users u
+  where u.auth_user_id = auth.uid()
+  limit 1;
+
+  if caller_role is null or caller_role <> 'admin' then
+    raise exception 'Назначать склады может только администратор';
+  end if;
+
+  if not exists (select 1 from public.tmc_users where id = p_user_id) then
+    raise exception 'Пользователь не найден';
+  end if;
+
+  if p_warehouse_ids is not null and coalesce(array_length(p_warehouse_ids, 1), 0) > 0 then
+    update public.tmc_users
+    set warehouse_id = p_warehouse_ids[1]
+    where id = p_user_id;
+  else
+    update public.tmc_users
+    set warehouse_id = null
+    where id = p_user_id;
+  end if;
+
+  update public.tmc_warehouses w
+  set responsible_ids = coalesce((
+    select jsonb_agg(v.value)
+    from jsonb_array_elements_text(coalesce(w.responsible_ids, '[]'::jsonb)) v
+    where v.value::text is distinct from p_user_id
+  ), '[]'::jsonb);
+
+  if p_warehouse_ids is not null and coalesce(array_length(p_warehouse_ids, 1), 0) > 0 then
+    foreach wid in array p_warehouse_ids
+    loop
+      if exists (select 1 from public.tmc_warehouses where id = wid) then
+        update public.tmc_warehouses
+        set responsible_ids = coalesce(responsible_ids, '[]'::jsonb) || jsonb_build_array(p_user_id)
+        where id = wid
+          and not exists (
+            select 1
+            from jsonb_array_elements_text(coalesce(responsible_ids, '[]'::jsonb)) e
+            where e.value = p_user_id
+          );
+      end if;
+    end loop;
+  end if;
+end;
+$$;
+
 create or replace function public.tmc_append_asset_movement(
   p_asset_id text,
   p_transfer_id text,
@@ -993,6 +1059,7 @@ grant execute on function public.tmc_reject_transfer(text, text, text) to authen
 grant execute on function public.tmc_request_writeoff(text, numeric, text, text) to authenticated;
 grant execute on function public.tmc_approve_writeoff(text, numeric, text, text) to authenticated;
 grant execute on function public.tmc_reject_writeoff(text, text) to authenticated;
+grant execute on function public.tmc_set_user_warehouse_access(text, text[]) to authenticated;
 
 -- Enable Supabase Realtime for core tables so clients get instant updates.
 do $$

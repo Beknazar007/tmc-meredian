@@ -119,11 +119,17 @@ function fromUserRow(u) {
   };
 }
 
+function normalizeResponsibleIdArray(warehouse) {
+  const raw = warehouse.responsible_ids ?? warehouse.responsibleIds ?? [];
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.map((x) => String(x).trim()).filter(Boolean))].sort();
+}
+
 function toWarehouseRow(warehouse) {
   return {
     id: warehouse.id,
     name: warehouse.name,
-    responsible_ids: warehouse.responsible_ids ?? warehouse.responsibleIds ?? [],
+    responsible_ids: normalizeResponsibleIdArray(warehouse),
     responsible_id: nullableId(warehouse.responsible_id ?? warehouse.responsibleId),
   };
 }
@@ -426,6 +432,19 @@ export async function migrateLocalToCloud(local) {
   }
 
   localStorage.setItem(MIGRATION_FLAG, "1");
+}
+
+/**
+ * Server-side: assign user ↔ warehouses in one transaction (replaces fragile multi-row client diff).
+ */
+export async function setUserWarehouseAccess(userId, warehouseIds) {
+  assertConfiguredAndClient();
+  const ids = (warehouseIds || []).map((x) => String(x).trim()).filter(Boolean);
+  const { error } = await supabase.rpc("tmc_set_user_warehouse_access", {
+    p_user_id: String(userId),
+    p_warehouse_ids: ids,
+  });
+  if (error) throw error;
 }
 
 export async function saveUsers(nextList, prevList) {

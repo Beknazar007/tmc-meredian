@@ -16,6 +16,7 @@ import {
   updateUserRole as updateUserRoleCloud,
   saveUsers as saveUsersCloud,
   saveWarehouses as saveWarehousesCloud,
+  setUserWarehouseAccess as setUserWarehouseAccessCloud,
 } from "../lib/repository";
 import { getSupabaseSession, hasSupabaseConfig, supabase } from "../lib/supabase";
 
@@ -328,6 +329,15 @@ export function useAppState(defaults) {
     return ok;
   }, []);
 
+  const setUserWarehouseAccess = useCallback(async (userId, warehouseIds) => {
+    return runCloudWrite(async () => {
+      await setUserWarehouseAccessCloud(userId, warehouseIds);
+      const [freshWh, freshUsers] = await Promise.all([loadWarehousesSlice(), loadUsersSlice()]);
+      setWarehouses(freshWh);
+      setUsers(freshUsers);
+    });
+  }, []);
+
   const saveAssets = useCallback(async (value) => {
     const prev = assetsRef.current;
     const ok = await runCloudWrite(() => saveAssetsCloud(value, prev));
@@ -425,6 +435,7 @@ export function useAppState(defaults) {
       resetUserPassword,
       deleteUser,
       saveWarehouses,
+      setUserWarehouseAccess,
       saveAssets,
       saveTransfers,
       saveCategories,
@@ -446,6 +457,7 @@ export function useAppState(defaults) {
       clearSession,
       hydrateFromCloud,
       refreshSlice,
+      setUserWarehouseAccess,
     ]
   );
 }
