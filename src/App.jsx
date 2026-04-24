@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   loadCloudState,
@@ -1454,15 +1454,24 @@ function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, upda
   const [form, setForm] = useState({ name: "", login: "", password: "", role: "user", warehouseIds: [] });
   const [editId, setEditId] = useState("");
   const [saving, setSaving] = useState(false);
+  const formTopRef = useRef(null);
   const reset = () => {
     setForm({ name: "", login: "", password: "", role: "user", warehouseIds: [] });
     setEditId("");
   };
 
-  const getUserWarehouseIds = (userId) =>
-    warehouses
-      .filter((w) => (w.responsibleIds || []).includes(userId) || w.id === (users.find((u) => u.id === userId)?.warehouseId))
+  /** Sklds for user: primary (tmc_users.warehouse_id) first, then the rest (stable for edit + summary). */
+  const getUserWarehouseIds = (userId) => {
+    const u = users.find((x) => x.id === userId);
+    const ids = warehouses
+      .filter((w) => (w.responsibleIds || []).includes(userId) || w.id === u?.warehouseId)
       .map((w) => w.id);
+    const primary = u?.warehouseId;
+    if (primary && ids.includes(primary)) {
+      return [primary, ...ids.filter((id) => id !== primary)];
+    }
+    return ids;
+  };
 
   const toggleWarehouse = (id) =>
     setForm((p) => ({
@@ -1471,6 +1480,12 @@ function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, upda
         ? p.warehouseIds.filter((x) => x !== id)
         : [...p.warehouseIds, id],
     }));
+
+  useLayoutEffect(() => {
+    if (editId) {
+      formTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [editId]);
 
   const submit = async () => {
     if (!form.name.trim() || !form.login.trim()) return;
@@ -1521,70 +1536,118 @@ function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, upda
   return (
     <Card>
       <SectionTitle>Пользователи</SectionTitle>
-      <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
-        <Field label="ФИО"><input style={inputStyle} value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field>
-        <Field label="Email / логин для входа">
-          <input
-            type="text"
-            autoCapitalize="none"
-            autoCorrect="off"
-            inputMode="email"
-            style={inputStyle}
-            value={form.login}
-            onChange={(e) => setForm((p) => ({ ...p, login: e.target.value }))}
-          />
-          <Muted style={{ marginTop: 4 }}>
-            Полный email (user@домен.com) или латинский логин. Без @ логин сохраняется как name@tmc.local — только латиница, цифры, . _ -
-          </Muted>
-        </Field>
-        <Field label={editId ? "Пароль (оставьте пустым, чтобы не менять)" : "Пароль *"}>
-          <input type="password" style={inputStyle} value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
-        </Field>
-        <Field label="Роль">
-          <select style={inputStyle} value={form.role} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}>
-            <option value="user">user</option>
-            <option value="admin">admin</option>
-          </select>
-        </Field>
-        {form.role === "user" && (
-          <Field label="Склады, за которые отвечает пользователь">
-            <div
-              style={{
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: 10,
-                padding: 10,
-                background: COLORS.bg,
-                display: "grid",
-                gap: 6,
-                maxHeight: 220,
-                overflowY: "auto",
-              }}
-            >
-              {warehouses.length === 0 && <Muted>Нет складов</Muted>}
-              {warehouses.map((warehouse) => (
-                <label
-                  key={warehouse.id}
-                  style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={form.warehouseIds.includes(warehouse.id)}
-                    onChange={() => toggleWarehouse(warehouse.id)}
-                  />
-                  <span>{warehouse.name}</span>
-                </label>
-              ))}
-            </div>
-            <Muted style={{ marginTop: 6 }}>
-              Первый выбранный склад становится «основным» для фильтров по умолчанию.
+      {editId && (
+        <InfoBanner color={COLORS.accent}>
+          Редактирование: {users.find((u) => u.id === editId)?.name || editId} — смените поля и нажмите «Сохранить», либо «Сбросить».
+        </InfoBanner>
+      )}
+      <form
+        key={editId || "create-user"}
+        autoComplete="off"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+        style={{ display: "block" }}
+      >
+        <div
+          ref={formTopRef}
+          tabIndex={-1}
+          style={{ display: "grid", gap: 10, marginBottom: 16, scrollMarginTop: 72, outline: "none" }}
+        >
+          <Field label="ФИО">
+            <input
+              style={inputStyle}
+              name="ua_name"
+              value={form.name}
+              onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+              placeholder="Например: Кудайбердиев Бекбол"
+            />
+          </Field>
+          <Field label="Email / логин для входа">
+            <input
+              type="text"
+              name="ua_login"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              inputMode="email"
+              style={inputStyle}
+              value={form.login}
+              onChange={(e) => setForm((p) => ({ ...p, login: e.target.value }))}
+              placeholder="user@company.com или short-login (латиница)"
+            />
+            <Muted style={{ marginTop: 4 }}>
+              Полный email (user@домен.com) или латинский логин. Без @ логин сохраняется как name@tmc.local — только латиница, цифры, . _ -
             </Muted>
           </Field>
-        )}
-        <div style={{ display: "flex", gap: 8 }}>
-          <button style={buttonStyle(COLORS.accent)} onClick={submit} disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</button>
-          {(editId || form.name || form.login) && <button style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={reset}>Сбросить</button>}
+          <Field label={editId ? "Пароль" : "Пароль *"}>
+            <input
+              type="password"
+              name="ua_password"
+              key={`ua-pw-${editId || "new"}`}
+              style={inputStyle}
+              value={form.password}
+              onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
+              placeholder={editId ? "Оставьте пустым, чтобы не менять пароль" : "Не меньше 6 символов"}
+              autoComplete={editId ? "off" : "new-password"}
+            />
+            {editId && (
+              <Muted style={{ marginTop: 4 }}>Новый пароль не обязателен — пусто значит «не менять».</Muted>
+            )}
+          </Field>
+          <Field label="Роль">
+            <select style={inputStyle} name="ua_role" value={form.role} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}>
+              <option value="user">user</option>
+              <option value="admin">admin</option>
+            </select>
+          </Field>
+          {form.role === "user" && (
+            <Field label="Склады, за которые отвечает пользователь">
+              <div
+                style={{
+                  border: `1px solid ${COLORS.border}`,
+                  borderRadius: 10,
+                  padding: 10,
+                  background: COLORS.bg,
+                  display: "grid",
+                  gap: 6,
+                  maxHeight: 220,
+                  overflowY: "auto",
+                }}
+              >
+                {warehouses.length === 0 && <Muted>Нет складов</Muted>}
+                {warehouses.map((warehouse) => (
+                  <label
+                    key={warehouse.id}
+                    style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 0" }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={form.warehouseIds.includes(warehouse.id)}
+                      onChange={() => toggleWarehouse(warehouse.id)}
+                    />
+                    <span>{warehouse.name}</span>
+                  </label>
+                ))}
+              </div>
+              <Muted style={{ marginTop: 6 }}>
+                «Основной» склад — первый в привязке. При редактировании он показывается в списке первым; чтобы сменить, снимите все галочки и отметьте сначала новый основной, затем остальные.
+              </Muted>
+            </Field>
+          )}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="submit" style={buttonStyle(COLORS.accent)} disabled={saving}>
+              {saving ? "Сохранение..." : "Сохранить"}
+            </button>
+            {(editId || form.name || form.login) && (
+              <button type="button" style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={reset}>
+                Сбросить
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      </form>
       <div style={{ display: "grid", gap: 8 }}>
         {users.map((user) => {
           const userWhIds = getUserWarehouseIds(user.id);
