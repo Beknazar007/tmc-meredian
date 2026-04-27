@@ -17,9 +17,12 @@ export function Topbar({ session, isAdmin, page, nav, logout, incomingCount, wri
   return (
     <div style={{ position: "sticky", top: 0, zIndex: 20, background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ cursor: "pointer" }} onClick={() => nav("warehouses")}>
-          <div style={{ fontSize: 11, letterSpacing: 2, color: COLORS.accent }}>TMC TRACKER</div>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>ТМЦ Трекер</div>
+        <div style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }} onClick={() => nav("warehouses")}>
+          <img src="/tmc.svg" alt="ТМЦ Трекер" width={36} height={36} style={{ borderRadius: 10, flexShrink: 0 }} />
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: 2, color: COLORS.accent }}>TMC TRACKER</div>
+            <div style={{ fontWeight: 700, fontSize: 20 }}>ТМЦ Трекер</div>
+          </div>
         </div>
         <div style={{ flex: 1 }} />
         <NavButton active={page === "warehouses"} onClick={() => nav("warehouses")} buttonStyle={buttonStyle} COLORS={COLORS}>
