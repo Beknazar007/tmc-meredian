@@ -998,7 +998,25 @@ begin
 
   update public.tmc_assets
   set status = 'На списание',
-      pending_woqty = coalesce(p_qty, a.qty)
+      pending_woqty = coalesce(p_qty, a.qty),
+      updated_at = now(),
+      history = coalesce(history, '[]'::jsonb) || jsonb_build_array(
+        jsonb_build_object(
+          'date', public.tmc_iso_now(),
+          'action',
+            case
+              when p_qty is not null then
+                'Запрос на списание (' || p_qty::text || ' ' || coalesce(a.unit, 'шт') || ')'
+              else 'Запрос на списание'
+            end,
+          'warehouseId', a.warehouse_id,
+          'responsibleId', a.responsible_id,
+          'qty', coalesce(p_qty, a.qty),
+          'status', 'На списание',
+          'by', p_actor,
+          'notes', p_notes
+        )
+      )
   where id = p_asset_id;
 
   perform public.tmc_append_asset_movement(
@@ -1044,7 +1062,25 @@ begin
   update public.tmc_assets
   set qty = next_qty,
       pending_woqty = null,
-      status = case when next_qty is null or next_qty <= 0 then 'Списан' else 'На складе' end
+      status = case when next_qty is null or next_qty <= 0 then 'Списан' else 'На складе' end,
+      updated_at = now(),
+      history = coalesce(history, '[]'::jsonb) || jsonb_build_array(
+        jsonb_build_object(
+          'date', public.tmc_iso_now(),
+          'action',
+            case
+              when a.qty is not null then
+                'Списано (' || write_qty::text || ' ' || coalesce(a.unit, 'шт') || ')'
+              else 'Списано'
+            end,
+          'warehouseId', a.warehouse_id,
+          'responsibleId', a.responsible_id,
+          'qty', write_qty,
+          'status', case when next_qty is null or next_qty <= 0 then 'Списан' else 'На складе' end,
+          'by', p_actor,
+          'notes', p_notes
+        )
+      )
   where id = p_asset_id;
 
   perform public.tmc_append_asset_movement(
@@ -1078,7 +1114,19 @@ begin
 
   update public.tmc_assets
   set status = 'На складе',
-      pending_woqty = null
+      pending_woqty = null,
+      updated_at = now(),
+      history = coalesce(history, '[]'::jsonb) || jsonb_build_array(
+        jsonb_build_object(
+          'date', public.tmc_iso_now(),
+          'action', 'Отклонено списание',
+          'warehouseId', a.warehouse_id,
+          'responsibleId', a.responsible_id,
+          'status', 'На складе',
+          'by', p_actor,
+          'notes', 'Отклонено администратором'
+        )
+      )
   where id = p_asset_id;
 
   perform public.tmc_append_asset_movement(
