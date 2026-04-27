@@ -1,5 +1,12 @@
 import { useState } from "react";
 
+/** First word of display name; in RU data usually "Фамилия И.О." */
+function surnameFromName(name) {
+  const t = String(name || "").trim();
+  if (!t) return "";
+  return t.split(/\s+/)[0] || t;
+}
+
 function NavButton({ children, active, onClick, buttonStyle, COLORS }) {
   return (
     <button
@@ -19,7 +26,9 @@ export function Topbar({ session, isAdmin, page, nav, logout, incomingCount, wri
   const pr = purchaseRequestCount ?? 0;
   const login = String(session.user.login || "").trim() || "—";
   const displayName = String(session.user.name || "").trim();
-  const showSubline = displayName && displayName.toLowerCase() !== login.toLowerCase();
+  const fromName = surnameFromName(displayName);
+  const topLine = fromName || login;
+  const showLoginSubline = fromName && fromName.toLowerCase() !== login.toLowerCase();
   return (
     <div style={{ position: "sticky", top: 0, zIndex: 20, background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
       {logoutConfirm && (
@@ -109,27 +118,40 @@ export function Topbar({ session, isAdmin, page, nav, logout, incomingCount, wri
           style={{
             padding: "8px 12px",
             borderRadius: 10,
-            background: "linear-gradient(180deg, rgba(59, 130, 246, 0.08), rgba(0,0,0,0.1))",
+            background: "linear-gradient(180deg, rgba(59, 130, 246, 0.06), rgba(0,0,0,0.12))",
             border: `1px solid ${COLORS.border}`,
             minWidth: 0,
             maxWidth: 220,
           }}
         >
-          <div style={{ fontSize: 10, letterSpacing: 0.6, textTransform: "uppercase", color: COLORS.muted, marginBottom: 2 }}>Пользователь</div>
           <div
             style={{
-              fontSize: 14,
+              fontSize: 15,
               fontWeight: 600,
-              color: COLORS.text,
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              color: COLORS.accent,
+              lineHeight: 1.25,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
             }}
-            title="Логин"
+            title={fromName ? displayName : "Логин"}
           >
-            {login}
+            {topLine}
           </div>
-          {showSubline && (
-            <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2, lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={displayName}>
-              {displayName}
+          {showLoginSubline && (
+            <div
+              style={{
+                fontSize: 12,
+                marginTop: 2,
+                color: COLORS.muted,
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+              title="Логин"
+            >
+              {login}
             </div>
           )}
         </div>
