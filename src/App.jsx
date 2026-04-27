@@ -69,6 +69,13 @@ const fmtD = (value) => (value ? new Date(value).toLocaleDateString("ru-RU") : "
 const trNo = () => `НК-${String(Date.now()).slice(-6)}`;
 const qtyStr = (qty, unit) => `${Number(qty)} ${unit || "шт"}`;
 
+const REQ_STATUS_META = {
+  pending: { color: "#f59e0b", icon: "⏳", label: "Ожидает" },
+  approved: { color: "#3b82f6", icon: "✓", label: "Одобрено" },
+  rejected: { color: "#ef4444", icon: "✗", label: "Отклонено" },
+  purchased: { color: "#10b981", icon: "📦", label: "Закуплено" },
+};
+
 export default function App() {
   const [page, setPage] = useState("warehouses");
   const [ctx, setCtx] = useState({});
@@ -80,6 +87,7 @@ export default function App() {
     assets,
     transfers,
     categories,
+    purchaseRequests,
     session,
     authDecision,
     saveUsers,
@@ -92,6 +100,7 @@ export default function App() {
     saveAssets,
     saveTransfers,
     saveCategories,
+    savePurchaseRequests,
     saveSession,
     clearSession,
     hydrateFromCloud,
@@ -310,6 +319,9 @@ export default function App() {
   const incoming = transfers.filter((t) => t.status === "pending" && (isAdmin || t.toResponsibleId === myUserId));
   const pendingWO = assets.filter((a) => a.status === "На списание");
   const lowStock = assets.filter((a) => a.qty !== undefined && a.minQty > 0 && a.qty <= a.minQty && a.status !== "Списан");
+  const purchaseRequestPendingCount = purchaseRequests.filter(
+    (r) => r.status === "pending" && (isAdmin || r.createdBy === myUserId)
+  ).length;
 
   const shared = {
     users,
@@ -317,6 +329,7 @@ export default function App() {
     assets,
     transfers,
     categories,
+    purchaseRequests,
     session,
     isAdmin,
     myWHid,
@@ -331,6 +344,7 @@ export default function App() {
     saveAssets,
     saveTransfers,
     saveCategories,
+    savePurchaseRequests,
     syncAfterRpc,
     nav,
   };
@@ -346,6 +360,7 @@ export default function App() {
         incomingCount={incoming.length}
         writeoffCount={pendingWO.length}
         lowStockCount={lowStock.length}
+        purchaseRequestCount={purchaseRequestPendingCount}
         COLORS={COLORS}
         buttonStyle={buttonStyle}
       />
@@ -357,6 +372,9 @@ export default function App() {
         {page === "writeoffs" && isAdmin && <WriteoffPage {...shared} />}
         {page === "admin" && isAdmin && <AdminPanel {...shared} />}
         {page === "waybill" && <WaybillPage {...shared} transferId={ctx.transferId} />}
+        {page === "requests" && (
+          <RequestsPage {...shared} requestId={ctx.requestId} myUserId={myUserId} myWHid={myWHid} />
+        )}
         {page === "export" && isAdmin && <ExportPage {...shared} />}
       </div>
     </div>
@@ -1888,6 +1906,625 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
         <button style={{ ...buttonStyle(COLORS.accent), flex: "1 1 180px" }} onClick={submit} disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</button>
         <button style={{ ...buttonStyle("transparent", { border: `1px solid ${COLORS.border}` }), flex: "1 1 180px" }} onClick={onCancel} disabled={saving}>Отмена</button>
       </div>
+    </div>
+  );
+}
+
+function RequestsPage({
+  requestId,
+  myUserId,
+  purchaseRequests,
+  savePurchaseRequests,
+  saveAssets,
+  assets,
+  users,
+  warehouses,
+  categories,
+  session,
+  isAdmin,
+  nav,
+  myWHid,
+}) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [filterStatus, setFilterStatus] = useState("all");
+
+  if (requestId) {
+    const req = purchaseRequests.find((r) => r.id === requestId);
+    if (!req) {
+      return (
+        <div>
+          <Muted style={{ marginBottom: 12 }}>Заявка не найдена.</Muted>
+          <button type="button" style={buttonStyle(COLORS.accent)} onClick={() => nav("requests", {})}>
+            К списку заявок
+          </button>
+        </div>
+      );
+    }
+    return (
+      <RequestDetailView
+        req={req}
+        purchaseRequests={purchaseRequests}
+        savePurchaseRequests={savePurchaseRequests}
+        saveAssets={saveAssets}
+        assets={assets}
+        users={users}
+        warehouses={warehouses}
+        categories={categories}
+        session={session}
+        isAdmin={isAdmin}
+        nav={nav}
+      />
+    );
+  }
+
+  const scopeFilter = (r) => isAdmin || r.createdBy === myUserId;
+  const requestScope = purchaseRequests.filter(scopeFilter);
+  const statusCounts = { pending: 0, approved: 0, rejected: 0, purchased: 0 };
+  requestScope.forEach((r) => {
+    if (statusCounts[r.status] != null) statusCounts[r.status] += 1;
+  });
+
+  const visible = requestScope
+    .filter((r) => filterStatus === "all" || r.status === filterStatus)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  return (
+    <div>
+      <Row>
+        <div>
+          <Tag>ЗАКУПКИ</Tag>
+          <H1>Заявки на ТМЦ</H1>
+          <Muted style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+            {isAdmin ? "Все заявки сотрудников" : "Ваши заявки на закупку ТМЦ"}
+          </Muted>
+        </div>
+        <button type="button" style={buttonStyle(COLORS.accent)} onClick={() => setShowAdd(true)}>
+          + Новая заявка
+        </button>
+      </Row>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        <button
+          type="button"
+          style={buttonStyle(filterStatus === "all" ? `${COLORS.accent}22` : "transparent", { border: `1px solid ${filterStatus === "all" ? COLORS.accent : COLORS.border}` })}
+          onClick={() => setFilterStatus("all")}
+        >
+          Все ({requestScope.length})
+        </button>
+        {Object.entries(REQ_STATUS_META).map(([key, val]) => (
+          <button
+            key={key}
+            type="button"
+            style={buttonStyle(filterStatus === key ? `${val.color}22` : "transparent", { border: `1px solid ${filterStatus === key ? val.color : COLORS.border}` })}
+            onClick={() => setFilterStatus(key)}
+          >
+            {val.icon} {val.label} ({statusCounts[key] || 0})
+          </button>
+        ))}
+      </div>
+      {visible.length === 0 && <Empty text="Нет заявок" />}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {visible.map((r) => {
+          const rs = REQ_STATUS_META[r.status] || REQ_STATUS_META.pending;
+          const wh = warehouses.find((w) => w.id === r.warehouseId);
+          const creator = users.find((u) => u.id === r.createdBy);
+          return (
+            <Card
+              key={r.id}
+              hover
+              onClick={() => nav("requests", { requestId: r.id })}
+              style={{ border: `1px solid ${rs.color}33` }}
+            >
+              <Row>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>{r.name}</span>
+                    <Chip color={rs.color}>
+                      {rs.icon} {rs.label}
+                    </Chip>
+                    {r.purchasedName && r.purchasedName !== r.name && <Chip color={COLORS.success}>→ {r.purchasedName}</Chip>}
+                  </div>
+                  <Muted style={{ fontSize: 12 }}>
+                    {r.qty != null && r.qty !== "" ? <span>{qtyStr(r.qty, r.unit)} · </span> : null}
+                    {r.category && <span>{r.category} · </span>}
+                    {wh?.name || "—"} · ✍ {creator?.name || "—"} · {fmtD(r.createdAt)}
+                  </Muted>
+                  {r.notes && (
+                    <Muted style={{ fontSize: 12, display: "block", marginTop: 4 }}>{r.notes}</Muted>
+                  )}
+                </div>
+                <Muted style={{ fontSize: 12, whiteSpace: "nowrap" }}>Открыть ›</Muted>
+              </Row>
+            </Card>
+          );
+        })}
+      </div>
+      {showAdd && (
+        <Modal onClose={() => setShowAdd(false)}>
+          <AddPurchaseRequestForm
+            warehouses={warehouses}
+            categories={categories}
+            session={session}
+            myWHid={myWHid}
+            onCancel={() => setShowAdd(false)}
+            onSave={async (row) => {
+              const ok = await savePurchaseRequests([...purchaseRequests, row]);
+              if (ok) setShowAdd(false);
+            }}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function AddPurchaseRequestForm({ warehouses, categories, session, myWHid, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    name: "",
+    category: "",
+    qty: "",
+    unit: "шт",
+    warehouseId: myWHid || warehouses[0]?.id || "",
+    urgency: "обычная",
+    notes: "",
+  });
+
+  const submit = async () => {
+    if (!form.name.trim()) {
+      alert("Укажите наименование");
+      return;
+    }
+    if (!form.warehouseId) {
+      alert("Выберите склад");
+      return;
+    }
+    const row = {
+      id: `REQ-${uid().toUpperCase().slice(0, 8)}`,
+      name: form.name.trim(),
+      category: form.category || null,
+      qty: form.qty === "" || String(form.qty).trim() === "" ? null : Number(String(form.qty).replace(",", ".")),
+      unit: form.unit,
+      warehouseId: form.warehouseId,
+      notes: form.notes.trim() || null,
+      urgency: form.urgency,
+      status: "pending",
+      createdBy: session.user.id,
+      createdAt: nowISO(),
+    };
+    if (row.qty != null && (Number.isNaN(row.qty) || row.qty < 0)) {
+      alert("Укажите корректное количество");
+      return;
+    }
+    await onSave(row);
+  };
+
+  return (
+    <div
+      style={{
+        background: COLORS.surface,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 16,
+        padding: 20,
+        maxWidth: 440,
+        width: "100%",
+      }}
+    >
+      <H1>Новая заявка</H1>
+      <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+        <Field label="Что нужно закупить *">
+          <input style={inputStyle} value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
+        </Field>
+        <Field label="Категория">
+          <select style={inputStyle} value={form.category} onChange={(e) => setForm((p) => ({ ...p, category: e.target.value }))}>
+            <option value="">— выберите —</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <Field label="Количество">
+            <input style={inputStyle} type="number" min="0" step="0.01" value={form.qty} onChange={(e) => setForm((p) => ({ ...p, qty: e.target.value }))} />
+          </Field>
+          <Field label="Ед. изм.">
+            <select style={inputStyle} value={form.unit} onChange={(e) => setForm((p) => ({ ...p, unit: e.target.value }))}>
+              {UNITS.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <Field label="Для склада *">
+          <select style={inputStyle} value={form.warehouseId} onChange={(e) => setForm((p) => ({ ...p, warehouseId: e.target.value }))}>
+            {warehouses.length === 0 && <option value="">— нет складов —</option>}
+            {warehouses.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Срочность">
+          <select style={inputStyle} value={form.urgency} onChange={(e) => setForm((p) => ({ ...p, urgency: e.target.value }))}>
+            <option value="обычная">Обычная</option>
+            <option value="срочная">Срочная</option>
+            <option value="очень срочная">Очень срочная</option>
+          </select>
+        </Field>
+        <Field label="Примечание / пожелания">
+          <input style={inputStyle} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
+        </Field>
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <button type="button" style={{ ...buttonStyle(COLORS.accent), flex: 1 }} onClick={submit}>
+            Отправить заявку
+          </button>
+          <button type="button" style={{ ...buttonStyle("transparent", { border: `1px solid ${COLORS.border}` }), flex: 1 }} onClick={onCancel}>
+            Отмена
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RequestDetailView({
+  req,
+  purchaseRequests,
+  savePurchaseRequests,
+  saveAssets,
+  assets,
+  users,
+  warehouses,
+  categories,
+  session,
+  isAdmin,
+  nav,
+}) {
+  const [showReject, setShowReject] = useState(false);
+  const [rejectNote, setRejectNote] = useState("");
+  const [showPurchase, setShowPurchase] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef(null);
+  const [purchase, setPurchase] = useState({
+    name: req.name,
+    category: req.category || "",
+    qty: req.qty ?? "",
+    unit: req.unit || "шт",
+    price: "",
+    supplier: "",
+    warehouseId: req.warehouseId,
+    notes: "",
+    photo: "",
+  });
+  const rs = REQ_STATUS_META[req.status] || REQ_STATUS_META.pending;
+  const wh = warehouses.find((w) => w.id === req.warehouseId);
+  const creator = users.find((u) => u.id === req.createdBy);
+  const approver = users.find((u) => u.id === req.approvedBy);
+
+  const updateRequest = (patch) =>
+    savePurchaseRequests(purchaseRequests.map((r) => (r.id === req.id ? { ...r, ...patch } : r)));
+
+  const approve = async () => {
+    if (!isAdmin) return;
+    setSaving(true);
+    try {
+      const ok = await updateRequest({
+        status: "approved",
+        approvedBy: session.user.id,
+        approvedAt: nowISO(),
+        approveNote: null,
+      });
+      if (ok) {
+        /* noop */
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reject = async () => {
+    if (!rejectNote.trim()) {
+      alert("Укажите причину отклонения");
+      return;
+    }
+    setSaving(true);
+    try {
+      const ok = await updateRequest({
+        status: "rejected",
+        approvedBy: session.user.id,
+        approvedAt: nowISO(),
+        approveNote: rejectNote.trim(),
+      });
+      if (ok) {
+        setShowReject(false);
+        setRejectNote("");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onPhoto = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setPurchase((p) => ({ ...p, photo: reader.result }));
+    reader.readAsDataURL(file);
+  };
+
+  const handlePurchase = async () => {
+    if (!purchase.name.trim()) {
+      alert("Укажите наименование");
+      return;
+    }
+    if (!purchase.category) {
+      alert("Выберите категорию");
+      return;
+    }
+    if (purchase.qty === "" || String(purchase.qty).trim() === "") {
+      alert("Укажите количество");
+      return;
+    }
+    const qty = Number(String(purchase.qty).replace(",", "."));
+    if (Number.isNaN(qty) || qty < 0) {
+      alert("Укажите корректное количество");
+      return;
+    }
+    if (!purchase.supplier?.trim()) {
+      alert("Укажите поставщика");
+      return;
+    }
+    if (purchase.price === "" || String(purchase.price).trim() === "") {
+      alert(`Укажите цену (${CURRENCY}, можно 0)`);
+      return;
+    }
+    const price = Number(String(purchase.price).replace(",", "."));
+    if (Number.isNaN(price) || price < 0) {
+      alert("Некорректная цена");
+      return;
+    }
+    if (!purchase.warehouseId) {
+      alert("Выберите склад прихода");
+      return;
+    }
+
+    const isAnalog = purchase.name.trim() !== req.name;
+    const newId = `TMC-${uid().toUpperCase().slice(0, 8)}`;
+    const today = new Date().toISOString().slice(0, 10);
+    const newAsset = {
+      id: newId,
+      name: purchase.name.trim(),
+      category: purchase.category,
+      supplier: purchase.supplier.trim(),
+      price,
+      purchaseDate: today,
+      responsibleId: session.user.id,
+      notes: purchase.notes?.trim() || "",
+      photo: purchase.photo || "",
+      unit: purchase.unit || "шт",
+      qty,
+      initialQty: qty,
+      minQty: 0,
+      warehouseId: purchase.warehouseId,
+      fromRequestId: req.id,
+      status: "На складе",
+      createdAt: nowISO(),
+      history: [
+        {
+          date: nowISO(),
+          action: `Закуплено по заявке${isAnalog ? ` (в заявке: ${req.name})` : ""} (${qtyStr(qty, purchase.unit)})`,
+          warehouseId: purchase.warehouseId,
+          responsibleId: session.user.id,
+          status: "На складе",
+          by: session.user.name,
+          qty,
+          notes: `Заявка от ${creator?.name || "—"}${req.notes ? `. ${req.notes}` : ""}${purchase.notes ? `. ${purchase.notes}` : ""}`,
+        },
+      ],
+    };
+
+    setSaving(true);
+    try {
+      const okAsset = await saveAssets([...assets, newAsset]);
+      if (!okAsset) return;
+      const okReq = await updateRequest({
+        status: "purchased",
+        purchasedAt: nowISO(),
+        purchasedBy: session.user.id,
+        purchasedName: purchase.name.trim(),
+        purchasedQty: qty,
+        purchasedUnit: purchase.unit,
+        purchasedPrice: price,
+        purchasedSupplier: purchase.supplier.trim(),
+        purchasedAssetId: newId,
+        isAnalog,
+      });
+      if (okReq) {
+        setShowPurchase(false);
+        nav("asset", { assetId: newId });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <Breadcrumb
+        items={[
+          { label: "Заявки", onClick: () => nav("requests", {}) },
+          { label: req.name },
+        ]}
+      />
+      <Card style={{ border: `1px solid ${rs.color}44` }}>
+        <Row>
+          <div>
+            <H1 style={{ fontSize: 20, marginBottom: 6 }}>{req.name}</H1>
+            {req.purchasedName && req.purchasedName !== req.name && (
+              <div style={{ fontSize: 13, color: COLORS.success, marginBottom: 6 }}>
+                Закуплено как: <b>{req.purchasedName}</b>
+              </div>
+            )}
+            <Chip color={rs.color}>
+              {rs.icon} {rs.label}
+            </Chip>
+          </div>
+          {req.purchasedAssetId && (
+            <button type="button" style={buttonStyle(COLORS.success)} onClick={() => nav("asset", { assetId: req.purchasedAssetId })}>
+              Открыть ТМЦ
+            </button>
+          )}
+        </Row>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginTop: 12, fontSize: 13 }}>
+          <InfoLine label="Количество" value={req.qty != null && req.qty !== "" ? qtyStr(req.qty, req.unit) : "не указано"} />
+          <InfoLine label="Категория" value={req.category || "—"} />
+          <InfoLine label="Склад" value={wh?.name || "—"} />
+          <InfoLine label="Запросил" value={creator?.name || "—"} />
+          <InfoLine label="Дата заявки" value={fmt(req.createdAt)} />
+          {req.urgency && <InfoLine label="Срочность" value={req.urgency} />}
+        </div>
+        {req.notes && (
+          <div style={{ marginTop: 12 }}>
+            <Muted style={{ fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>Примечание</Muted>
+            <div style={{ marginTop: 4 }}>{req.notes}</div>
+          </div>
+        )}
+        {req.approvedBy && <InfoLine label="Рассмотрел" value={approver?.name || "—"} />}
+        {req.approvedAt && <InfoLine label="Дата решения" value={fmt(req.approvedAt)} />}
+        {req.approveNote && (
+          <div style={{ marginTop: 8 }}>
+            <InfoLine label="Комментарий" value={req.approveNote} />
+          </div>
+        )}
+      </Card>
+
+      {req.status === "purchased" && (
+        <Card style={{ background: "#10b98112", border: `1px solid ${COLORS.success}55` }}>
+          <SectionTitle>Результат закупки</SectionTitle>
+          <div style={{ display: "grid", gap: 8, fontSize: 13 }}>
+            <InfoLine label="Куплено" value={req.purchasedName || "—"} />
+            <InfoLine label="Количество" value={req.purchasedQty != null ? qtyStr(req.purchasedQty, req.purchasedUnit) : "—"} />
+            {req.purchasedPrice != null && <InfoLine label={`Цена (${CURRENCY})`} value={String(req.purchasedPrice)} />}
+            {req.purchasedSupplier && <InfoLine label="Поставщик" value={req.purchasedSupplier} />}
+            {req.purchasedAt && <InfoLine label="Дата" value={fmt(req.purchasedAt)} />}
+          </div>
+        </Card>
+      )}
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+        {isAdmin && req.status === "pending" && (
+          <>
+            <button type="button" style={buttonStyle(COLORS.accent)} onClick={approve} disabled={saving}>
+              Одобрить
+            </button>
+            <button
+              type="button"
+              style={buttonStyle("transparent", { border: `1px solid ${COLORS.danger}` })}
+              onClick={() => setShowReject(true)}
+              disabled={saving}
+            >
+              Отклонить
+            </button>
+          </>
+        )}
+        {isAdmin && req.status === "approved" && (
+          <button type="button" style={buttonStyle(COLORS.success)} onClick={() => setShowPurchase(true)} disabled={saving}>
+            Оформить закупку (оприходовать)
+          </button>
+        )}
+        <button type="button" style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => nav("requests", {})}>
+          К списку
+        </button>
+      </div>
+
+      {showReject && (
+        <Card style={{ border: `1px solid ${COLORS.danger}66`, marginTop: 16 }}>
+          <SectionTitle>Причина отклонения</SectionTitle>
+          <Field label="Комментарий *">
+            <input style={inputStyle} value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} />
+          </Field>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button type="button" style={buttonStyle(COLORS.danger)} onClick={reject} disabled={saving}>
+              Отклонить заявку
+            </button>
+            <button type="button" style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })} onClick={() => setShowReject(false)}>
+              Отмена
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {showPurchase && (
+        <Card style={{ border: `1px solid ${COLORS.success}66`, marginTop: 16 }}>
+          <SectionTitle>Оформление закупки</SectionTitle>
+          <Muted style={{ fontSize: 12, display: "block", marginBottom: 12 }}>
+            Заявка: <b style={{ color: COLORS.text }}>{req.name}</b>
+            {req.qty != null ? ` · ${qtyStr(req.qty, req.unit)}` : ""}. Если куплен аналог — измените наименование.
+          </Muted>
+          <div onClick={() => fileRef.current?.click()} style={{ height: 160, borderRadius: 12, border: `2px dashed ${COLORS.border}`, marginBottom: 12, display: "grid", placeItems: "center", cursor: "pointer", overflow: "hidden" }}>
+            {purchase.photo ? <img src={purchase.photo} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Muted>Фото (необязательно)</Muted>}
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onPhoto} />
+          <div style={{ display: "grid", gap: 10 }}>
+            <Field label="Наименование (можно изменить, если аналог) *">
+              <input style={inputStyle} value={purchase.name} onChange={(e) => setPurchase((p) => ({ ...p, name: e.target.value }))} />
+            </Field>
+            <Field label="Категория *">
+              <select style={inputStyle} value={purchase.category} onChange={(e) => setPurchase((p) => ({ ...p, category: e.target.value }))}>
+                <option value="">— выберите —</option>
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <Field label="Количество *">
+                <input style={inputStyle} type="number" min="0" step="0.01" value={purchase.qty} onChange={(e) => setPurchase((p) => ({ ...p, qty: e.target.value }))} />
+              </Field>
+              <Field label="Ед. изм.">
+                <select style={inputStyle} value={purchase.unit} onChange={(e) => setPurchase((p) => ({ ...p, unit: e.target.value }))}>
+                  {UNITS.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <Field label={`Цена (${CURRENCY}) *`}>
+              <input style={inputStyle} type="number" min="0" step="0.01" value={purchase.price} onChange={(e) => setPurchase((p) => ({ ...p, price: e.target.value }))} />
+            </Field>
+            <Field label="Поставщик *">
+              <input style={inputStyle} value={purchase.supplier} onChange={(e) => setPurchase((p) => ({ ...p, supplier: e.target.value }))} />
+            </Field>
+            <Field label="Склад прихода *">
+              <select style={inputStyle} value={purchase.warehouseId} onChange={(e) => setPurchase((p) => ({ ...p, warehouseId: e.target.value }))}>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Примечание (например, если аналог)">
+              <input style={inputStyle} value={purchase.notes} onChange={(e) => setPurchase((p) => ({ ...p, notes: e.target.value }))} />
+            </Field>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" style={{ ...buttonStyle(COLORS.success), flex: 1 }} onClick={handlePurchase} disabled={saving}>
+                {saving ? "Сохранение…" : "Оприходовать"}
+              </button>
+              <button type="button" style={{ ...buttonStyle("transparent", { border: `1px solid ${COLORS.border}` }), flex: 1 }} onClick={() => setShowPurchase(false)} disabled={saving}>
+                Отмена
+              </button>
+            </div>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

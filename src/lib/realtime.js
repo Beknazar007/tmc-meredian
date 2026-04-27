@@ -7,6 +7,7 @@ const REALTIME_TABLES = [
   CLOUD_TABLES.assets,
   CLOUD_TABLES.transfers,
   CLOUD_TABLES.categories,
+  CLOUD_TABLES.purchaseRequests,
 ];
 
 const TABLE_TO_SLICE = {
@@ -15,6 +16,7 @@ const TABLE_TO_SLICE = {
   [CLOUD_TABLES.assets]: "assets",
   [CLOUD_TABLES.transfers]: "transfers",
   [CLOUD_TABLES.categories]: "categories",
+  [CLOUD_TABLES.purchaseRequests]: "purchaseRequests",
 };
 
 /**

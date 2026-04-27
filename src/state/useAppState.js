@@ -5,12 +5,14 @@ import {
   loadAssetsSlice,
   loadCategoriesSlice,
   loadCloudState,
+  loadPurchaseRequestsSlice,
   loadTransfersSlice,
   loadUsersSlice,
   loadWarehousesSlice,
   resetUserPassword as resetUserPasswordCloud,
   saveAssets as saveAssetsCloud,
   saveCategories as saveCategoriesCloud,
+  savePurchaseRequests as savePurchaseRequestsCloud,
   saveTransfers as saveTransfersCloud,
   updateUser as updateUserCloud,
   updateUserRole as updateUserRoleCloud,
@@ -89,6 +91,7 @@ export function useAppState(defaults) {
   const [assets, setAssets] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [purchaseRequests, setPurchaseRequests] = useState([]);
   const [session, setSessionRaw] = useState(null);
   // authDecision tracks whether we have a *definitive* answer about auth:
   //   "pending"  -> unknown (show Splash, never Login)
@@ -114,6 +117,7 @@ export function useAppState(defaults) {
   const assetsRef = useRef(assets);
   const transfersRef = useRef(transfers);
   const categoriesRef = useRef(categories);
+  const purchaseRequestsRef = useRef(purchaseRequests);
   useEffect(() => {
     usersRef.current = users;
   }, [users]);
@@ -129,6 +133,9 @@ export function useAppState(defaults) {
   useEffect(() => {
     categoriesRef.current = categories;
   }, [categories]);
+  useEffect(() => {
+    purchaseRequestsRef.current = purchaseRequests;
+  }, [purchaseRequests]);
 
   useEffect(() => {
     let alive = true;
@@ -163,6 +170,7 @@ export function useAppState(defaults) {
       setAssets([]);
       setTransfers([]);
       setCategories(defaults.categories || []);
+      setPurchaseRequests([]);
       setSession(null, "no_supabase");
       setReady(true);
       return () => {
@@ -181,6 +189,7 @@ export function useAppState(defaults) {
         setAssets(cloud.assets || []);
         setTransfers(cloud.transfers || []);
         setCategories(cloud.categories?.length ? cloud.categories : defaults.categories || []);
+        setPurchaseRequests(cloud.purchaseRequests || []);
       } catch (error) {
         console.warn("Cloud state load failed:", error?.message || error);
         if (!alive) return;
@@ -189,6 +198,7 @@ export function useAppState(defaults) {
         setAssets([]);
         setTransfers([]);
         setCategories(defaults.categories || []);
+        setPurchaseRequests([]);
       } finally {
         cloudLoaded = true;
         maybeFinishLoading();
@@ -376,6 +386,13 @@ export function useAppState(defaults) {
     return ok;
   }, []);
 
+  const savePurchaseRequests = useCallback(async (value) => {
+    const prev = purchaseRequestsRef.current;
+    const ok = await runCloudWrite(() => savePurchaseRequestsCloud(value, prev));
+    if (ok) setPurchaseRequests(value);
+    return ok;
+  }, []);
+
   const saveSession = useCallback(async (value) => {
     setSession(value, value ? "save_user" : "save_null");
     return true;
@@ -397,6 +414,7 @@ export function useAppState(defaults) {
     if (cloud.assets) setAssets(cloud.assets);
     if (cloud.transfers) setTransfers(cloud.transfers);
     if (cloud.categories) setCategories(cloud.categories);
+    if (cloud.purchaseRequests) setPurchaseRequests(cloud.purchaseRequests);
   }, []);
 
   const refreshSlice = useCallback(async (slice) => {
@@ -428,6 +446,11 @@ export function useAppState(defaults) {
           setCategories(next);
           break;
         }
+        case "purchaseRequests": {
+          const next = await loadPurchaseRequestsSlice();
+          setPurchaseRequests(next);
+          break;
+        }
         default:
           break;
       }
@@ -444,6 +467,7 @@ export function useAppState(defaults) {
       assets,
       transfers,
       categories,
+      purchaseRequests,
       session,
       authDecision,
       saveUsers,
@@ -456,6 +480,7 @@ export function useAppState(defaults) {
       saveAssets,
       saveTransfers,
       saveCategories,
+      savePurchaseRequests,
       saveSession,
       clearSession,
       hydrateFromCloud,
@@ -468,6 +493,7 @@ export function useAppState(defaults) {
       assets,
       transfers,
       categories,
+      purchaseRequests,
       session,
       authDecision,
       saveSession,

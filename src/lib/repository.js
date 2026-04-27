@@ -6,6 +6,7 @@ const TABLES = {
   assets: "tmc_assets",
   transfers: "tmc_transfers",
   categories: "tmc_categories",
+  purchaseRequests: "tmc_purchase_requests",
 };
 
 const STORAGE_BUCKET = "asset-photos";
@@ -177,6 +178,7 @@ function toAssetRow(asset, photoOverride) {
     min_qty: minRaw === null ? 0 : minRaw,
     initial_qty: nullIfBlankNum(asset.initialQty ?? asset.initial_qty),
     warehouse_id: nullableId(asset.warehouseId ?? asset.warehouse_id),
+    from_request_id: nullableId(asset.fromRequestId ?? asset.from_request_id),
     status: asset.status ?? "На складе",
     history: asset.history ?? [],
     pending_woqty: nullIfBlankNum(asset.pendingWOqty ?? asset.pending_woqty),
@@ -293,8 +295,8 @@ function diffById(prevList, nextList, { compareRow } = {}) {
   return { toUpsert, toDelete };
 }
 
-async function readTable(table, orderBy = "id") {
-  const { data, error } = await supabase.from(table).select("*").order(orderBy, { ascending: true });
+async function readTable(table, orderBy = "id", { ascending = true } = {}) {
+  const { data, error } = await supabase.from(table).select("*").order(orderBy, { ascending });
   if (error) throw error;
   return data || [];
 }
@@ -321,6 +323,63 @@ function fromAssetRow(a) {
     initialQty: a.initial_qty ?? a.initialQty,
     qty: a.qty,
     pendingWOqty: a.pending_woqty ?? a.pendingWOqty,
+    fromRequestId: a.from_request_id ?? a.fromRequestId ?? null,
+  };
+}
+
+function toPurchaseRequestRow(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    category: r.category ?? null,
+    qty: nullIfBlankNum(r.qty),
+    unit: r.unit ?? null,
+    warehouse_id: nullableId(r.warehouseId ?? r.warehouse_id),
+    notes: r.notes ?? null,
+    urgency: r.urgency ?? null,
+    status: r.status ?? "pending",
+    created_by: r.createdBy ?? r.created_by,
+    created_at: r.createdAt ?? r.created_at ?? new Date().toISOString(),
+    approved_by: nullableId(r.approvedBy ?? r.approved_by),
+    approved_at: r.approvedAt ?? r.approved_at ?? null,
+    approve_note: r.approveNote ?? r.approve_note ?? null,
+    purchased_at: r.purchasedAt ?? r.purchased_at ?? null,
+    purchased_by: nullableId(r.purchasedBy ?? r.purchased_by),
+    purchased_name: r.purchasedName ?? r.purchased_name ?? null,
+    purchased_qty: nullIfBlankNum(r.purchasedQty ?? r.purchased_qty),
+    purchased_unit: r.purchasedUnit ?? r.purchased_unit ?? null,
+    purchased_price: nullIfBlankNum(r.purchasedPrice ?? r.purchased_price),
+    purchased_supplier: r.purchasedSupplier ?? r.purchased_supplier ?? null,
+    purchased_asset_id: nullableId(r.purchasedAssetId ?? r.purchased_asset_id),
+    is_analog: !!(r.isAnalog ?? r.is_analog),
+  };
+}
+
+function fromPurchaseRequestRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    qty: row.qty,
+    unit: row.unit,
+    warehouseId: row.warehouse_id,
+    notes: row.notes,
+    urgency: row.urgency,
+    status: row.status,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    approvedBy: row.approved_by,
+    approvedAt: row.approved_at,
+    approveNote: row.approve_note,
+    purchasedAt: row.purchased_at,
+    purchasedBy: row.purchased_by,
+    purchasedName: row.purchased_name,
+    purchasedQty: row.purchased_qty,
+    purchasedUnit: row.purchased_unit,
+    purchasedPrice: row.purchased_price,
+    purchasedSupplier: row.purchased_supplier,
+    purchasedAssetId: row.purchased_asset_id,
+    isAnalog: row.is_analog,
   };
 }
 
@@ -375,14 +434,21 @@ export async function loadCategoriesSlice() {
   return rows.map((c) => c.name);
 }
 
+export async function loadPurchaseRequestsSlice() {
+  assertConfiguredAndClient();
+  const rows = await readTable(TABLES.purchaseRequests, "created_at", { ascending: false });
+  return rows.map(fromPurchaseRequestRow);
+}
+
 export async function loadCloudState() {
   assertConfiguredAndClient();
-  const [users, warehouses, assets, transfers, categories] = await Promise.all([
+  const [users, warehouses, assets, transfers, categories, purchaseRequests] = await Promise.all([
     loadUsersSlice(),
     loadWarehousesSlice(),
     loadAssetsSlice(),
     loadTransfersSlice(),
     loadCategoriesSlice(),
+    loadPurchaseRequestsSlice(),
   ]);
 
   return {
@@ -391,6 +457,7 @@ export async function loadCloudState() {
     assets,
     transfers,
     categories,
+    purchaseRequests,
   };
 }
 
@@ -418,6 +485,7 @@ export async function migrateLocalToCloud(local) {
     })
   );
   const transfers = (local.transfers || []).map(toTransferRow);
+  const purchaseRequests = (local.purchaseRequests || []).map(toPurchaseRequestRow);
 
   await Promise.all([
     upsertRows(TABLES.categories, categories),
@@ -425,6 +493,7 @@ export async function migrateLocalToCloud(local) {
     upsertRows(TABLES.warehouses, warehouses),
     upsertRows(TABLES.assets, assets),
     upsertRows(TABLES.transfers, transfers),
+    upsertRows(TABLES.purchaseRequests, purchaseRequests),
   ]);
 
   if (local.session) {
@@ -548,6 +617,14 @@ export async function saveTransfers(nextList, prevList) {
   const prevRows = (prevList || []).map(toTransferRow);
   const { toUpsert, toDelete } = diffById(prevRows, nextRows);
   await applyRowDiff(TABLES.transfers, toUpsert, toDelete);
+}
+
+export async function savePurchaseRequests(nextList, prevList) {
+  assertConfiguredAndClient();
+  const nextRows = (nextList || []).map(toPurchaseRequestRow);
+  const prevRows = (prevList || []).map(toPurchaseRequestRow);
+  const { toUpsert, toDelete } = diffById(prevRows, nextRows);
+  await applyRowDiff(TABLES.purchaseRequests, toUpsert, toDelete);
 }
 
 export async function saveCategories(nextList, prevList) {

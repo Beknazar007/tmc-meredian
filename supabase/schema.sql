@@ -87,6 +87,43 @@ create table if not exists public.tmc_categories (
   created_at timestamptz not null default now()
 );
 
+-- Procurement requests (v9: «Закупки / заявки на ТМЦ»).
+create table if not exists public.tmc_purchase_requests (
+  id text primary key,
+  name text not null,
+  category text,
+  qty numeric,
+  unit text,
+  warehouse_id text,
+  notes text,
+  urgency text,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'purchased')),
+  created_by text not null,
+  created_at timestamptz not null default now(),
+  approved_by text,
+  approved_at timestamptz,
+  approve_note text,
+  purchased_at timestamptz,
+  purchased_by text,
+  purchased_name text,
+  purchased_qty numeric,
+  purchased_unit text,
+  purchased_price numeric,
+  purchased_supplier text,
+  purchased_asset_id text,
+  is_analog boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+-- Optional link: ТМЦ created when fulfilling an approved request.
+alter table public.tmc_assets
+  add column if not exists from_request_id text;
+
+drop trigger if exists trg_tmc_purchase_requests_updated_at on public.tmc_purchase_requests;
+create trigger trg_tmc_purchase_requests_updated_at
+  before update on public.tmc_purchase_requests
+  for each row execute function public.set_updated_at();
+
 -- Keep a stable baseline of categories in DB.
 insert into public.tmc_categories (id, name)
 values
@@ -399,6 +436,7 @@ alter table public.tmc_categories enable row level security;
 alter table public.tmc_sessions enable row level security;
 alter table public.tmc_warehouse_responsibles enable row level security;
 alter table public.tmc_asset_movements enable row level security;
+alter table public.tmc_purchase_requests enable row level security;
 
 drop policy if exists tmc_users_select_policy on public.tmc_users;
 create policy tmc_users_select_policy on public.tmc_users
@@ -444,6 +482,11 @@ create policy tmc_asset_movements_rw_policy on public.tmc_asset_movements
 for all using (auth.role() in ('authenticated', 'anon'))
 with check (auth.role() = 'authenticated');
 
+drop policy if exists tmc_purchase_requests_rw_policy on public.tmc_purchase_requests;
+create policy tmc_purchase_requests_rw_policy on public.tmc_purchase_requests
+for all using (auth.role() in ('authenticated', 'anon'))
+with check (auth.role() = 'authenticated');
+
 -- Explicit API grants for Supabase roles.
 grant usage on schema public to anon, authenticated;
 
@@ -455,7 +498,8 @@ grant select on table
   public.tmc_categories,
   public.tmc_sessions,
   public.tmc_warehouse_responsibles,
-  public.tmc_asset_movements
+  public.tmc_asset_movements,
+  public.tmc_purchase_requests
 to anon;
 
 grant select, insert, update, delete on table
@@ -466,7 +510,8 @@ grant select, insert, update, delete on table
   public.tmc_categories,
   public.tmc_sessions,
   public.tmc_warehouse_responsibles,
-  public.tmc_asset_movements
+  public.tmc_asset_movements,
+  public.tmc_purchase_requests
 to authenticated;
 
 -- One atomic update: set which warehouses a user is responsible for (admin only).
@@ -1070,7 +1115,8 @@ declare
     'tmc_warehouses',
     'tmc_assets',
     'tmc_transfers',
-    'tmc_categories'
+    'tmc_categories',
+    'tmc_purchase_requests'
   ];
 begin
   foreach tbl in array tables loop

@@ -12,7 +12,8 @@ function NavButton({ children, active, onClick, buttonStyle, COLORS }) {
   );
 }
 
-export function Topbar({ session, isAdmin, page, nav, logout, incomingCount, writeoffCount, lowStockCount, COLORS, buttonStyle }) {
+export function Topbar({ session, isAdmin, page, nav, logout, incomingCount, writeoffCount, lowStockCount, purchaseRequestCount, COLORS, buttonStyle }) {
+  const pr = purchaseRequestCount ?? 0;
   return (
     <div style={{ position: "sticky", top: 0, zIndex: 20, background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}` }}>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -23,6 +24,9 @@ export function Topbar({ session, isAdmin, page, nav, logout, incomingCount, wri
         <div style={{ flex: 1 }} />
         <NavButton active={page === "warehouses"} onClick={() => nav("warehouses")} buttonStyle={buttonStyle} COLORS={COLORS}>
           Склады{lowStockCount ? ` (${lowStockCount} мало)` : ""}
+        </NavButton>
+        <NavButton active={page === "requests"} onClick={() => nav("requests", {})} buttonStyle={buttonStyle} COLORS={COLORS}>
+          Закупки{pr > 0 ? ` (${pr})` : ""}
         </NavButton>
         <NavButton active={page === "incoming"} onClick={() => nav("incoming")} buttonStyle={buttonStyle} COLORS={COLORS}>
           Входящие{incomingCount ? ` (${incomingCount})` : ""}
