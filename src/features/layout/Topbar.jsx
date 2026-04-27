@@ -29,7 +29,7 @@ export function Topbar({ session, isAdmin, page, nav, logout, incomingCount, wri
           Склады{lowStockCount ? ` (${lowStockCount} мало)` : ""}
         </NavButton>
         <NavButton active={page === "requests"} onClick={() => nav("requests", {})} buttonStyle={buttonStyle} COLORS={COLORS}>
-          Закупки{pr > 0 ? ` (${pr})` : ""}
+          Заявки{pr > 0 ? ` (${pr})` : ""}
         </NavButton>
         <NavButton active={page === "incoming"} onClick={() => nav("incoming")} buttonStyle={buttonStyle} COLORS={COLORS}>
           Входящие{incomingCount ? ` (${incomingCount})` : ""}

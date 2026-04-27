@@ -2027,7 +2027,7 @@ function RequestsPage({
     <div>
       <Row>
         <div>
-          <Tag>ЗАКУПКИ</Tag>
+          <Tag>ЗАЯВКИ</Tag>
           <H1>Заявки на ТМЦ</H1>
           <Muted style={{ fontSize: 12, display: "block", marginTop: 4 }}>
             {isAdmin ? "Все заявки сотрудников" : "Ваши заявки на закупку ТМЦ"}
