@@ -14,6 +14,7 @@ import { subscribeToCloudChanges } from "./lib/realtime";
 import { useAppState } from "./state/useAppState";
 import { Login } from "./features/auth/Login";
 import { Topbar } from "./features/layout/Topbar";
+import { confirmAction, notify, promptValue } from "./lib/notify";
 
 const UNITS = ["шт", "л", "кг", "т", "м", "м²", "м³", "уп", "рул", "компл", "пара", "box"];
 /** Валюта для цен в интерфейсе и экспорте (KGS). */
@@ -200,7 +201,7 @@ export default function App() {
       void saveSession({ user: refreshedUser });
     } catch (error) {
       console.error(error);
-      alert("Ошибка серверной операции. Проверьте подключение и права доступа.");
+      notify.error("Ошибка серверной операции. Проверьте подключение и права доступа.");
     }
   };
 
@@ -593,12 +594,19 @@ function AssetDetail(props) {
   };
 
   const createTransfer = async () => {
-    if (!transferForm.toWhId) return alert("Выберите склад назначения");
-    if (!transferForm.responsibleId) return alert("Выберите ответственного получателя");
+    if (!transferForm.toWhId) {
+      notify.warn("Выберите склад назначения");
+      return;
+    }
+    if (!transferForm.responsibleId) {
+      notify.warn("Выберите ответственного получателя");
+      return;
+    }
     const toWarehouse = warehouses.find((item) => item.id === transferForm.toWhId);
     const qty = hasQty ? Number(transferForm.qty) : null;
     if (hasQty && (!qty || qty <= 0 || qty > asset.qty)) {
-      return alert(`Введите количество от 0.01 до ${asset.qty}`);
+      notify.warn(`Введите количество от 0.01 до ${asset.qty}`);
+      return;
     }
 
     const transfer = {
@@ -671,7 +679,8 @@ function AssetDetail(props) {
   const requestWriteoff = async () => {
     const qty = hasQty ? Number(writeoffForm.qty) : null;
     if (hasQty && (!qty || qty <= 0 || qty > asset.qty)) {
-      return alert(`Введите количество от 0.01 до ${asset.qty}`);
+      notify.warn(`Введите количество от 0.01 до ${asset.qty}`);
+      return;
     }
 
     if (hasSupabaseConfig && isAdmin) {
@@ -704,9 +713,12 @@ function AssetDetail(props) {
   const confirmIncoming = async () => {
     if (!pendingTransfer) return;
     const qtyLabel = pendingTransfer.qty ? qtyStr(pendingTransfer.qty, pendingTransfer.unit) : "1 шт";
-    const ok = window.confirm(
-      `Подтвердить получение «${pendingTransfer.assetName}» (${qtyLabel}) от ${pendingTransfer.fromWhName || "—"}?\n\nПосле подтверждения ТМЦ будет перенесён на ваш склад.`
-    );
+    const ok = await confirmAction({
+      title: "Подтвердить получение",
+      message: `Подтвердить получение «${pendingTransfer.assetName}» (${qtyLabel}) от ${pendingTransfer.fromWhName || "—"}?\n\nПосле подтверждения ТМЦ будет перенесён на ваш склад.`,
+      confirmText: "Подтвердить",
+      cancelText: "Отмена",
+    });
     if (!ok) return;
     if (hasSupabaseConfig) {
       await syncAfterRpc(() => rpcConfirmTransfer(pendingTransfer.id, session.user.name));
@@ -717,17 +729,30 @@ function AssetDetail(props) {
 
   const rejectIncoming = async () => {
     if (!pendingTransfer) return;
-    const reason = (window.prompt("Укажите причину отклонения:") || "").trim();
-    if (!reason) return;
-    const ok = window.confirm(
-      `Отклонить передачу «${pendingTransfer.assetName}»?\n\nПричина: ${reason}\n\nТМЦ вернётся на склад отправителя.`
-    );
+    const reason = await promptValue({
+      title: "Причина отклонения",
+      message: "Укажите причину — её увидят в контексте передачи.",
+      label: "Текст причины",
+      placeholder: "Например: лишнее / не тот артикул / отмена заявки",
+      requireNonEmpty: true,
+      confirmText: "Далее",
+    });
+    if (reason === null) return;
+    const r = String(reason).trim();
+    if (!r) return;
+    const ok = await confirmAction({
+      title: "Отклонить передачу?",
+      message: `Отклонить «${pendingTransfer.assetName}»?\n\nПричина: ${r}\n\nТМЦ вернётся на склад отправителя.`,
+      confirmText: "Отклонить",
+      cancelText: "Назад",
+      danger: true,
+    });
     if (!ok) return;
     if (hasSupabaseConfig) {
-      await syncAfterRpc(() => rpcRejectTransfer(pendingTransfer.id, session.user.name, reason));
+      await syncAfterRpc(() => rpcRejectTransfer(pendingTransfer.id, session.user.name, r));
       return;
     }
-    rejectTransfer(pendingTransfer, assets, saveAssets, transfers, saveTransfers, session.user.name, reason);
+    rejectTransfer(pendingTransfer, assets, saveAssets, transfers, saveTransfers, session.user.name, r);
   };
 
   return (
@@ -1000,9 +1025,12 @@ function IncomingPage({ transfers, assets, saveAssets, saveTransfers, isAdmin, m
 
   const onConfirm = async (transfer) => {
     const qtyLabel = transfer.qty ? qtyStr(transfer.qty, transfer.unit) : "1 шт";
-    const ok = window.confirm(
-      `Подтвердить получение «${transfer.assetName}» (${qtyLabel}) от ${transfer.fromWhName || "—"}?\n\nПосле подтверждения ТМЦ будет перенесён на ваш склад.`
-    );
+    const ok = await confirmAction({
+      title: "Подтвердить получение",
+      message: `Подтвердить получение «${transfer.assetName}» (${qtyLabel}) от ${transfer.fromWhName || "—"}?\n\nПосле подтверждения ТМЦ будет перенесён на ваш склад.`,
+      confirmText: "Подтвердить",
+      cancelText: "Отмена",
+    });
     if (!ok) return;
     if (hasSupabaseConfig) {
       await syncAfterRpc(() => rpcConfirmTransfer(transfer.id, session.user.name));
@@ -1012,11 +1040,24 @@ function IncomingPage({ transfers, assets, saveAssets, saveTransfers, isAdmin, m
   };
 
   const onReject = async (transfer) => {
-    const reason = (window.prompt("Укажите причину отклонения:") || "").trim();
+    const reasonRaw = await promptValue({
+      title: "Причина отклонения",
+      message: "Укажите причину отклонения передачи.",
+      label: "Текст причины",
+      placeholder: "Кратко",
+      requireNonEmpty: true,
+      confirmText: "Далее",
+    });
+    if (reasonRaw === null) return;
+    const reason = String(reasonRaw).trim();
     if (!reason) return;
-    const ok = window.confirm(
-      `Отклонить передачу «${transfer.assetName}»?\n\nПричина: ${reason}\n\nТМЦ вернётся на склад отправителя.`
-    );
+    const ok = await confirmAction({
+      title: "Отклонить передачу?",
+      message: `Отклонить «${transfer.assetName}»?\n\nПричина: ${reason}\n\nТМЦ вернётся на склад отправителя.`,
+      confirmText: "Отклонить",
+      cancelText: "Назад",
+      danger: true,
+    });
     if (!ok) return;
     if (hasSupabaseConfig) {
       await syncAfterRpc(() => rpcRejectTransfer(transfer.id, session.user.name, reason));
@@ -1510,18 +1551,18 @@ function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, upda
   const submit = async () => {
     if (!form.name.trim() || !form.login.trim()) return;
     if (!isValidAuthLoginField(form.login)) {
-      alert(
+      notify.warn(
         "Поле «Логин для входа» указано неверно. Нужен латинский логин (например ivan) — в системе он станет ivan@tmc.local. Полный email (user@company.com) можно указать по желанию. Кириллица в коротком логине не поддерживается."
       );
       return;
     }
     const password = form.password.trim();
     if (!editId && !password) {
-      alert("Для нового пользователя укажите пароль.");
+      notify.warn("Для нового пользователя укажите пароль.");
       return;
     }
     if ((!editId || password) && password && password.length < 6) {
-      alert("Пароль не короче 6 символов (так настроен Supabase).");
+      notify.warn("Пароль не короче 6 символов (так настроен Supabase).");
       return;
     }
     const warehouseIds = form.role === "admin" ? [] : form.warehouseIds;
@@ -1550,9 +1591,9 @@ function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, upda
       if (!ok2) return; /* runCloudWrite уже показал ошибку; профиль в БД мог быть создан — проверьте в списке */
       const displayName = form.name.trim();
       if (editId) {
-        alert(`Изменения для пользователя «${displayName}» сохранены.`);
+        notify.success(`Изменения для пользователя «${displayName}» сохранены.`);
       } else {
-        alert(`Пользователь «${displayName}» успешно добавлен. Теперь он может войти в систему.`);
+        notify.success(`Пользователь «${displayName}» успешно добавлен. Теперь он может войти в систему.`);
       }
       reset();
     } finally {
@@ -1695,15 +1736,22 @@ function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, upda
                 <button
                   style={buttonStyle("transparent", { border: `1px solid ${COLORS.border}` })}
                   onClick={async () => {
-                    const pwd = window.prompt(`Новый пароль для ${user.login}:`, "");
+                    const pwd = await promptValue({
+                      title: "Новый пароль",
+                      message: `Задайте новый пароль для ${user.name} (${user.login}).`,
+                      label: "Пароль",
+                      password: true,
+                      placeholder: "Не меньше 6 символов",
+                      confirmText: "Сохранить",
+                    });
                     if (pwd === null) return;
                     const trimmed = pwd.trim();
                     if (trimmed.length < 6) {
-                      alert("Пароль должен содержать минимум 6 символов.");
+                      notify.warn("Пароль должен содержать минимум 6 символов.");
                       return;
                     }
                     const ok = await resetUserPassword(user.id, trimmed);
-                    if (ok) alert("Пароль обновлён.");
+                    if (ok) notify.success("Пароль обновлён.");
                   }}
                 >
                   Сбросить пароль
@@ -1711,7 +1759,14 @@ function UserAdmin({ users, warehouses, setUserWarehouseAccess, createUser, upda
                 <button
                   style={buttonStyle("#3a1a1a", { border: `1px solid ${COLORS.danger}` })}
                   onClick={async () => {
-                    if (!window.confirm(`Удалить пользователя ${user.name}? Это действие необратимо.`)) return;
+                    const go = await confirmAction({
+                      title: "Удаление пользователя",
+                      message: `Удалить пользователя ${user.name}? Это действие необратимо.`,
+                      confirmText: "Удалить",
+                      cancelText: "Отмена",
+                      danger: true,
+                    });
+                    if (!go) return;
                     await deleteUser(user.id);
                   }}
                 >
@@ -1760,46 +1815,46 @@ function AddAssetForm({ warehouseId, warehouses, users, categories, isAdmin, ses
       "Предупреждение: заполните все обязательные поля. Нужны название, категория, количество, поставщик, цена (числом, при отсутствии укажите 0), дата закупки и ответственный. Мин. остаток можно оставить пустым — будет 0.";
 
     if (!form.name.trim()) {
-      alert("Введите название");
+      notify.warn("Введите название");
       return;
     }
     if (!form.category) {
-      alert("Выберите категорию");
+      notify.warn("Выберите категорию");
       return;
     }
     if (form.qty === "" || String(form.qty).trim() === "") {
-      alert(warnFillAll);
+      notify.warn(warnFillAll);
       return;
     }
     const qty = Number(String(form.qty).replace(",", "."));
     if (Number.isNaN(qty) || qty < 0) {
-      alert(warnFillAll);
+      notify.warn(warnFillAll);
       return;
     }
     const minQty = form.minQty === "" || String(form.minQty).trim() === "" ? 0 : Number(String(form.minQty).replace(",", "."));
     if (Number.isNaN(minQty) || minQty < 0) {
-      alert(warnFillAll);
+      notify.warn(warnFillAll);
       return;
     }
     if (!form.supplier.trim()) {
-      alert(warnFillAll);
+      notify.warn(warnFillAll);
       return;
     }
     if (form.price === "" || String(form.price).trim() === "") {
-      alert(warnFillAll);
+      notify.warn(warnFillAll);
       return;
     }
     const price = Number(String(form.price).replace(",", "."));
     if (Number.isNaN(price) || price < 0) {
-      alert(warnFillAll);
+      notify.warn(warnFillAll);
       return;
     }
     if (!form.purchaseDate) {
-      alert(warnFillAll);
+      notify.warn(warnFillAll);
       return;
     }
     if (!form.responsibleId) {
-      alert(warnFillAll);
+      notify.warn(warnFillAll);
       return;
     }
 
@@ -2070,11 +2125,11 @@ function AddPurchaseRequestForm({ warehouses, categories, session, myWHid, onSav
 
   const submit = async () => {
     if (!form.name.trim()) {
-      alert("Укажите наименование");
+      notify.warn("Укажите наименование");
       return;
     }
     if (!form.warehouseId) {
-      alert("Выберите склад");
+      notify.warn("Выберите склад");
       return;
     }
     const row = {
@@ -2091,7 +2146,7 @@ function AddPurchaseRequestForm({ warehouses, categories, session, myWHid, onSav
       createdAt: nowISO(),
     };
     if (row.qty != null && (Number.isNaN(row.qty) || row.qty < 0)) {
-      alert("Укажите корректное количество");
+      notify.warn("Укажите корректное количество");
       return;
     }
     await onSave(row);
@@ -2227,7 +2282,7 @@ function RequestDetailView({
 
   const reject = async () => {
     if (!rejectNote.trim()) {
-      alert("Укажите причину отклонения");
+      notify.warn("Укажите причину отклонения");
       return;
     }
     setSaving(true);
@@ -2257,37 +2312,37 @@ function RequestDetailView({
 
   const handlePurchase = async () => {
     if (!purchase.name.trim()) {
-      alert("Укажите наименование");
+      notify.warn("Укажите наименование");
       return;
     }
     if (!purchase.category) {
-      alert("Выберите категорию");
+      notify.warn("Выберите категорию");
       return;
     }
     if (purchase.qty === "" || String(purchase.qty).trim() === "") {
-      alert("Укажите количество");
+      notify.warn("Укажите количество");
       return;
     }
     const qty = Number(String(purchase.qty).replace(",", "."));
     if (Number.isNaN(qty) || qty < 0) {
-      alert("Укажите корректное количество");
+      notify.warn("Укажите корректное количество");
       return;
     }
     if (!purchase.supplier?.trim()) {
-      alert("Укажите поставщика");
+      notify.warn("Укажите поставщика");
       return;
     }
     if (purchase.price === "" || String(purchase.price).trim() === "") {
-      alert(`Укажите цену (${CURRENCY}, можно 0)`);
+      notify.warn(`Укажите цену (${CURRENCY}, можно 0)`);
       return;
     }
     const price = Number(String(purchase.price).replace(",", "."));
     if (Number.isNaN(price) || price < 0) {
-      alert("Некорректная цена");
+      notify.warn("Некорректная цена");
       return;
     }
     if (!purchase.warehouseId) {
-      alert("Выберите склад прихода");
+      notify.warn("Выберите склад прихода");
       return;
     }
 

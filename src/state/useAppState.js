@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { notify } from "../lib/notify";
 import {
   createUser as createUserCloud,
   deleteUser as deleteUserCloud,
@@ -76,9 +77,9 @@ async function runCloudWrite(fn, options = {}) {
     console.error(error);
     const detail = extractErrorMessage(error);
     if (detail) {
-      alert(`Операция не сохранена: ${detail}`);
+      notify.error(`Операция не сохранена: ${detail}`);
     } else {
-      alert("Ошибка синхронизации с облаком. Операция не сохранена.");
+      notify.error("Ошибка синхронизации с облаком. Операция не сохранена.");
     }
     return false;
   }
